@@ -56,11 +56,15 @@ public class LiveViewService {
         NodeData nodeData = new NodeData();
         nodeData.setId(transactionData.getHash().toHexString());
         nodeData.setTrustScore(transactionData.getSenderTrustScore());
-        int currentIndex = graphData.nodes.indexOf(nodeData);
-        NodeData newNode = graphData.nodes.get(currentIndex);
-        newNode.setStatus(newStatus);
-        setNodeDataDatesFromTransactionData(transactionData, newNode);
-        sendNode(newNode);
+        nodeData.setStatus(newStatus);
+        setNodeDataDatesFromTransactionData(transactionData, nodeData);
+        int index = graphData.nodes.indexOf(nodeData);
+        if (index == -1) {
+            graphData.nodes.add(nodeData);
+        } else {
+            graphData.nodes.set(index, nodeData);
+        }
+        sendNode(nodeData);
     }
 
     public void setNodeDataDatesFromTransactionData(TransactionData transactionData, NodeData nodeData) {

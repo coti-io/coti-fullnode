@@ -9,6 +9,7 @@ import io.coti.basenode.http.GetTransactionBatchResponse;
 import io.coti.basenode.model.AddressTransactionsHistories;
 import io.coti.basenode.model.TransactionIndexes;
 import io.coti.basenode.model.Transactions;
+import io.coti.basenode.services.LiveView.LiveViewService;
 import io.coti.basenode.services.interfaces.IBalanceService;
 import io.coti.basenode.services.interfaces.IClusterService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
@@ -45,6 +46,8 @@ public class TransactionHelper implements ITransactionHelper {
     private DspConsensusCrypto dspConsensusCrypto;
     @Autowired
     private TransactionTrustScoreCrypto transactionTrustScoreCrypto;
+    @Autowired
+    private LiveViewService liveViewService;
     private Map<Hash, Stack<TransactionState>> transactionHashToTransactionStateStackMapping;
     private AtomicLong totalTransactions = new AtomicLong(0);
     private Set<Hash> noneIndexedTransactionHashes;
@@ -83,10 +86,14 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     public boolean isTransactionExists(TransactionData transactionData) {
-        if (transactionHashToTransactionStateStackMapping.containsKey(transactionData.getHash())) {
+        return isTransactionHashExists(transactionData.getHash());
+    }
+
+    public boolean isTransactionHashExists(Hash transactionHash) {
+        if (transactionHashToTransactionStateStackMapping.containsKey(transactionHash)) {
             return true;
         }
-        if (transactions.getByHash(transactionData.getHash()) != null) {
+        if (transactions.getByHash(transactionHash) != null) {
             return true;
         }
         return false;
@@ -117,10 +124,10 @@ public class TransactionHelper implements ITransactionHelper {
             if (isTransactionExists(transactionData)) {
                 return false;
             }
-            transactionHashToTransactionStateStackMapping.put(transactionData.getHash(), new Stack());
-            transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).push(RECEIVED);
-            return true;
         }
+        transactionHashToTransactionStateStackMapping.put(transactionData.getHash(), new Stack());
+        transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).push(RECEIVED);
+        return true;
     }
 
     public void endHandleTransaction(TransactionData transactionData) {
@@ -128,7 +135,7 @@ public class TransactionHelper implements ITransactionHelper {
             return;
         }
         if (transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).peek() == FINISHED) {
-            log.debug("Transaction handled successfully...");
+            log.debug("Transaction {} handled successfully", transactionData.getHash());
         } else {
             rollbackTransaction(transactionData);
         }
@@ -158,11 +165,11 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     private void revertSavedInDB(TransactionData transactionData) {
-        log.error("Reverting transaction saved in DB");
+        log.error("Reverting transaction saved in DB: {}", transactionData.getHash());
     }
 
     private void revertPreBalance(TransactionData transactionData) {
-        log.error("Reverting pre balance...");
+        log.error("Reverting pre balance: {}", transactionData.getHash());
         balanceService.rollbackBaseTransactions(transactionData);
     }
 
@@ -178,19 +185,20 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     public void attachTransactionToCluster(TransactionData transactionData) {
-        totalTransactions.incrementAndGet();
         transactionData.setTrustChainConsensus(false);
         transactionData.setTrustChainTransactionHashes(new LinkedList<>());
         transactionData.setTrustChainTrustScore(0);
         transactionData.setTransactionConsensusUpdateTime(null);
         transactionData.setChildrenTransactions(new LinkedList<>());
         transactions.put(transactionData);
+        totalTransactions.incrementAndGet();
         if (transactionData.getDspConsensusResult() == null) {
             addNoneIndexedTransaction(transactionData);
         } else {
             balanceService.setDspcToTrue(transactionData.getDspConsensusResult());
         }
         updateAddressTransactionHistory(transactionData);
+        liveViewService.addNode(transactionData);
         clusterService.attachToCluster(transactionData);
     }
 

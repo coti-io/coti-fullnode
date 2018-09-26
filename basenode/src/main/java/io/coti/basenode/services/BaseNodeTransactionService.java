@@ -35,40 +35,45 @@ public class BaseNodeTransactionService implements ITransactionService {
 
     @Override
     public void handlePropagatedTransaction(TransactionData transactionData) {
-        if (!transactionHelper.startHandleTransaction(transactionData)) {
-            log.debug("Transaction already exists: {}", transactionData.getHash().toHexString());
-            return;
-        }
-        if (!transactionHelper.validateTransaction(transactionData) ||
-                !transactionCrypto.verifySignature(transactionData) ||
-                !validationService.validatePot(transactionData)) {
-            log.error("Data Integrity validation failed: {}", transactionData.getHash().toHexString());
-            return;
-        }
-        if (hasOneOfParentsMissing(transactionData)) {
-            postponedTransactions.add(transactionData);
-            return;
-        }
-        if (!transactionHelper.checkBalancesAndAddToPreBalance(transactionData)) {
-            log.error("Balance check failed: {}", transactionData.getHash().toHexString());
-            return;
-        }
-        transactionHelper.attachTransactionToCluster(transactionData);
-        transactionHelper.setTransactionStateToSaved(transactionData);
+        try {
+            if (!transactionHelper.startHandleTransaction(transactionData)) {
+                log.debug("Transaction already exists: {}", transactionData.getHash());
+                return;
+            }
+            if (!transactionHelper.validateTransaction(transactionData) ||
+                    !transactionCrypto.verifySignature(transactionData) ||
+                    !validationService.validatePot(transactionData)) {
+                log.error("Data Integrity validation failed: {}", transactionData.getHash());
+                return;
+            }
+            if (hasOneOfParentsMissing(transactionData)) {
+                postponedTransactions.add(transactionData);
+                return;
+            }
+            if (!transactionHelper.checkBalancesAndAddToPreBalance(transactionData)) {
+                log.error("Balance check failed: {}", transactionData.getHash());
+                return;
+            }
 
-        continueHandlePropagatedTransaction(transactionData);
+            transactionHelper.attachTransactionToCluster(transactionData);
+            transactionHelper.setTransactionStateToSaved(transactionData);
 
-        List<TransactionData> postponedParentTransactions = postponedTransactions.stream().filter(
-                postponedTransactionData ->
-                        postponedTransactionData.getRightParentHash().equals(transactionData.getHash()) ||
-                                postponedTransactionData.getLeftParentHash().equals(transactionData.getHash()))
-                .collect(Collectors.toList());
-        postponedParentTransactions.forEach(postponedTransaction -> {
-            postponedTransactions.remove(postponedTransaction);
-            handlePropagatedTransaction(postponedTransaction);
-        });
-        transactionHelper.setTransactionStateToFinished(transactionData);
-        transactionHelper.endHandleTransaction(transactionData);
+            continueHandlePropagatedTransaction(transactionData);
+            transactionHelper.setTransactionStateToFinished(transactionData);
+            List<TransactionData> postponedParentTransactions = postponedTransactions.stream().filter(
+                    postponedTransactionData ->
+                            (postponedTransactionData.getRightParentHash() != null && postponedTransactionData.getRightParentHash().equals(transactionData.getHash())) ||
+                                    (postponedTransactionData.getLeftParentHash() != null && postponedTransactionData.getLeftParentHash().equals(transactionData.getHash())))
+                    .collect(Collectors.toList());
+            postponedParentTransactions.forEach(postponedTransaction -> {
+                log.debug("Handling postponed transaction : {}, parent of transaction: {}", postponedTransaction.getHash(), transactionData.getHash());
+                postponedTransactions.remove(postponedTransaction);
+                handlePropagatedTransaction(postponedTransaction);
+            });
+        } finally {
+            transactionHelper.endHandleTransaction(transactionData);
+        }
+
     }
 
     protected void continueHandlePropagatedTransaction(TransactionData transactionData) {
@@ -76,6 +81,10 @@ public class BaseNodeTransactionService implements ITransactionService {
 
     private boolean hasOneOfParentsMissing(TransactionData transactionData) {
         return (transactionData.getLeftParentHash() != null && transactions.getByHash(transactionData.getLeftParentHash()) == null) ||
-                transactionData.getRightParentHash() != null && transactions.getByHash(transactionData.getRightParentHash()) == null;
+                (transactionData.getRightParentHash() != null && transactions.getByHash(transactionData.getRightParentHash()) == null);
+    }
+
+    public int totalPostponedTransactions() {
+        return postponedTransactions.size();
     }
 }

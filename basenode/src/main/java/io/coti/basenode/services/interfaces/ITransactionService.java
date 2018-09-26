@@ -7,4 +7,6 @@ public interface ITransactionService {
     void init();
 
     void handlePropagatedTransaction(TransactionData transactionData);
+
+    int totalPostponedTransactions();
 }

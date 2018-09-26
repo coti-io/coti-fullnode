@@ -12,7 +12,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -61,8 +65,13 @@ public class BaseNodeInitializationService {
             if (!recoveryServerAddress.isEmpty()) {
                 List<TransactionData> missingTransactions = requestMissingTransactions(maxTransactionIndex.get() + 1);
                 if (missingTransactions != null) {
+                    int threadPoolSize = 3;
+                    log.info("{} threads running for missing transactions", threadPoolSize);
+                    ExecutorService executorService = Executors.newFixedThreadPool(threadPoolSize);
+                    List<Callable<Object>> missingTransactionsTasks = new ArrayList<>(missingTransactions.size());
                     missingTransactions.forEach(transactionData ->
-                            transactionService.handlePropagatedTransaction(transactionData));
+                            missingTransactionsTasks.add(Executors.callable(new addMissingTransaction(transactionData))));
+                    executorService.invokeAll(missingTransactionsTasks);
                 }
             }
 
@@ -72,6 +81,20 @@ public class BaseNodeInitializationService {
             log.error("Errors at {} : ", this.getClass().getSimpleName(), e);
             System.exit(-1);
         }
+    }
+
+    private class addMissingTransaction implements Runnable {
+        TransactionData transactionData;
+
+        private addMissingTransaction(TransactionData transactionData) {
+            this.transactionData = transactionData;
+        }
+
+        @Override
+        public void run() {
+            transactionService.handlePropagatedTransaction(transactionData);
+        }
+
     }
 
     private void handleExistingTransaction(AtomicLong maxTransactionIndex, TransactionData transactionData) {
