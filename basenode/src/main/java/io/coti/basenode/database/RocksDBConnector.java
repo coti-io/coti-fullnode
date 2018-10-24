@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.SerializationUtils;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import java.io.File;
 import java.nio.file.Paths;
 import java.util.*;
@@ -155,9 +154,8 @@ public class RocksDBConnector implements IDatabaseConnector {
         }
     }
 
-    @PreDestroy
     public void shutdown() {
-        log.info("Shutting down rocksDB");
+        log.info("Shutting down {}", this.getClass().getSimpleName());
         for (ColumnFamilyHandle columnFamilyHandle :
                 columnFamilyHandles) {
             columnFamilyHandle.close();
