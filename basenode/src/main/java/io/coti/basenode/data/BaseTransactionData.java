@@ -1,6 +1,9 @@
 package io.coti.basenode.data;
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.annotation.JsonTypeIdResolver;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 
 import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
@@ -8,34 +11,30 @@ import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.Date;
 
+@Slf4j
 @Data
-public class BaseTransactionData implements Serializable {
+@JsonTypeInfo(use = JsonTypeInfo.Id.CUSTOM,
+        include = JsonTypeInfo.As.PROPERTY,
+        property = "name")
+@JsonTypeIdResolver(BaseTransactionDataResolver.class)
+public abstract class BaseTransactionData implements Serializable {
     @NotNull
-    private Hash hash;
+    protected Hash hash;
     @NotNull
-    private Hash addressHash;
+    protected Hash addressHash;
+    protected BigDecimal amount;
     @NotNull
-    private BigDecimal amount;
-    @NotNull
-    private Date createTime;
-    private @Valid SignatureData signatureData;
+    protected Date createTime;
+    protected @Valid SignatureData signatureData;
 
-    private BaseTransactionData() {
-    }
+    protected BaseTransactionData() {
 
-    public BaseTransactionData(Hash addressHash, BigDecimal amount, Hash baseTransactionHash, SignatureData signature, Date createTime) {
-        this.addressHash = addressHash;
-
-        this.amount = amount;
-        this.hash = baseTransactionHash;
-        this.signatureData = signature;
-        this.createTime = createTime;
     }
 
     public BaseTransactionData(Hash addressHash, BigDecimal amount, Date createTime) {
         this.addressHash = addressHash;
-        this.amount = amount;
         this.createTime = createTime;
+        this.setAmount(amount);
     }
 
     @Override
@@ -48,5 +47,17 @@ public class BaseTransactionData implements Serializable {
             return false;
         }
         return hash.equals(((BaseTransactionData) other).hash);
+    }
+
+    public void setSignature(SignatureData signatureData) {
+        this.signatureData = signatureData;
+    }
+
+    public boolean isOutput() {
+        return amount.signum() > 0;
+    }
+
+    public boolean isInput() {
+        return amount.signum() <= 0;
     }
 }

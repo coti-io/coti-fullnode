@@ -2,6 +2,7 @@ package io.coti.basenode.services;
 
 import io.coti.basenode.communication.ZeroMQSubscriber;
 import io.coti.basenode.data.TransactionData;
+import io.coti.basenode.database.Interfaces.IDatabaseConnector;
 import io.coti.basenode.http.GetTransactionBatchRequest;
 import io.coti.basenode.http.GetTransactionBatchResponse;
 import io.coti.basenode.model.Transactions;
@@ -53,14 +54,21 @@ public class BaseNodeInitializationService {
     @Autowired
     private ZeroMQSubscriber zeroMQSubscriber;
 
+
+    @Autowired
+    private IDatabaseConnector rocksDbConnector;
+
+
     public void init() {
         try {
+            rocksDbConnector.init();
             addressService.init();
             balanceService.init();
             confirmationService.init();
             dspVoteService.init();
             transactionService.init();
             potService.init();
+
             AtomicLong maxTransactionIndex = new AtomicLong(-1);
             transactions.forEach(transactionData -> handleExistingTransaction(maxTransactionIndex, transactionData));
             transactionIndexService.init(maxTransactionIndex);
@@ -69,7 +77,7 @@ public class BaseNodeInitializationService {
             monitorService.init();
 
             if (!recoveryServerAddress.isEmpty()) {
-                List<TransactionData> missingTransactions = requestMissingTransactions(maxTransactionIndex.get() + 1);
+                List<TransactionData> missingTransactions = requestMissingTransactions(transactionIndexService.getLastTransactionIndexData().getIndex() + 1);
                 if (missingTransactions != null) {
                     int threadPoolSize = 1;
                     log.info("{} threads running for missing transactions", threadPoolSize);
@@ -115,9 +123,8 @@ public class BaseNodeInitializationService {
             log.info("Received transaction batch of size: {}", getTransactionBatchResponse.getTransactions().size());
             return getTransactionBatchResponse.getTransactions();
         } catch (Exception e) {
-            log.error("Unresponsive recovery Node: {}", recoveryServerAddress);
-            log.error(e.getMessage());
-            return null;
+            log.error("Error at missing transactions from recovery Node: {}", recoveryServerAddress);
+            throw new RuntimeException(e);
         }
     }
 }

@@ -1,9 +1,7 @@
 package io.coti.basenode.services.interfaces;
 
-import io.coti.basenode.data.BaseTransactionData;
-import io.coti.basenode.data.DspConsensusResult;
-import io.coti.basenode.data.Hash;
-import io.coti.basenode.data.TransactionData;
+import io.coti.basenode.data.*;
+import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
 import io.coti.basenode.http.GetTransactionBatchResponse;
 
 import java.util.List;
@@ -12,7 +10,11 @@ public interface ITransactionHelper {
 
     boolean validateBaseTransactionAmounts(List<BaseTransactionData> baseTransactions);
 
+    boolean validateBaseTransactionsDataIntegrity(TransactionData transactionData);
+
     boolean validateTransactionCrypto(TransactionData transactionData);
+
+    boolean validateTransactionType(TransactionData transactionData);
 
     boolean validateTrustScore(TransactionData transactionData);
 
@@ -38,6 +40,12 @@ public interface ITransactionHelper {
 
     boolean isTransactionHashExists(Hash transactionHash);
 
+    boolean validateBaseTransactionTrustScoreNodeResults(TransactionData transactionData);
+
+    boolean validateBaseTransactionTrustScoreNodeResult(ITrustScoreNodeValidatable baseTransactionData);
+
+    boolean isTransactionHashProcessing(Hash transactionHash);
+
     boolean isTransactionAlreadyPropagated(TransactionData transactionData);
 
     long getTotalTransactions();
@@ -49,4 +57,6 @@ public interface ITransactionHelper {
     void addNoneIndexedTransaction(TransactionData transactionData);
 
     void removeNoneIndexedTransaction(TransactionData transactionData);
+
+    PaymentInputBaseTransactionData getPaymentInputBaseTransaction(TransactionData transactionData);
 }

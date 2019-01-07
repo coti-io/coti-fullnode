@@ -1,6 +1,6 @@
 package io.coti.basenode.data;
 
-import io.coti.basenode.data.interfaces.IEntity;
+import io.coti.basenode.data.interfaces.IPropagatable;
 import io.coti.basenode.data.interfaces.ISignValidatable;
 import io.coti.basenode.data.interfaces.ISignable;
 import lombok.Data;
@@ -8,13 +8,15 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Data
-public class TransactionData implements IEntity, Comparable<TransactionData>, ISignable, ISignValidatable {
+public class TransactionData implements IPropagatable, Comparable<TransactionData>, ISignable, ISignValidatable {
     private List<BaseTransactionData> baseTransactions;
     private Hash hash;
     private BigDecimal amount;
+    private TransactionType type;
     private Hash leftParentHash;
     private Hash rightParentHash;
     private List<Hash> trustChainTransactionHashes;
@@ -29,7 +31,7 @@ public class TransactionData implements IEntity, Comparable<TransactionData>, IS
     private Date powEndTime;
     private double senderTrustScore;
     private Hash senderHash;
-    private String nodeIpAddress;
+    private SignatureData senderSignature;
     private Hash nodeHash;
     private SignatureData nodeSignature;
     private List<Hash> childrenTransactions;
@@ -46,15 +48,20 @@ public class TransactionData implements IEntity, Comparable<TransactionData>, IS
     private TransactionData() {
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, double senderTrustScore, Date createTime) {
-        this(baseTransactions, transactionDescription, senderTrustScore, createTime);
+    public TransactionData(List<BaseTransactionData> baseTransactions) {
+        this.baseTransactions = baseTransactions;
+    }
+
+    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, double senderTrustScore, Date createTime, TransactionType type) {
+        this(baseTransactions, transactionDescription, senderTrustScore, createTime, type);
         this.hash = transactionHash;
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, String transactionDescription, double senderTrustScore, Date createTime) {
+    public TransactionData(List<BaseTransactionData> baseTransactions, String transactionDescription, double senderTrustScore, Date createTime, TransactionType type) {
         this.transactionDescription = transactionDescription;
         this.baseTransactions = baseTransactions;
         this.createTime = createTime;
+        this.type = type;
         this.senderTrustScore = senderTrustScore;
         BigDecimal amount = BigDecimal.ZERO;
         for (BaseTransactionData baseTransaction : baseTransactions) {
@@ -64,11 +71,12 @@ public class TransactionData implements IEntity, Comparable<TransactionData>, IS
         this.initTransactionData();
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, List<TransactionTrustScoreData> trustScoreResults, Date createTime, Hash senderHash) {
+    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, List<TransactionTrustScoreData> trustScoreResults, Date createTime, Hash senderHash, TransactionType type) {
         this.hash = transactionHash;
         this.transactionDescription = transactionDescription;
         this.baseTransactions = baseTransactions;
         this.createTime = createTime;
+        this.type = type;
         this.senderHash = senderHash;
         this.trustScoreResults = trustScoreResults;
         BigDecimal amount = BigDecimal.ZERO;
@@ -78,7 +86,6 @@ public class TransactionData implements IEntity, Comparable<TransactionData>, IS
         this.amount = amount;
         this.initTransactionData();
     }
-
 
     private void initTransactionData() {
         this.trustChainTransactionHashes = new Vector<>();
@@ -132,14 +139,46 @@ public class TransactionData implements IEntity, Comparable<TransactionData>, IS
         return valid;
     }
 
+    public List<OutputBaseTransactionData> getOutputBaseTransactions() {
+        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData.isOutput()).map(OutputBaseTransactionData.class::cast).collect(Collectors.toList());
+    }
+
+    public List<InputBaseTransactionData> getInputBaseTransactions() {
+        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData.isInput()).map(InputBaseTransactionData.class::cast).collect(Collectors.toList());
+    }
+
+    public Hash getReceiverBaseTransactionHash() {
+
+        for (BaseTransactionData baseTransactionData : baseTransactions) {
+            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
+                return baseTransactionData.getHash();
+            }
+        }
+        return null;
+    }
+
+    public Hash getReceiverBaseTransactionAddressHash() {
+
+        for (BaseTransactionData baseTransactionData : baseTransactions) {
+            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
+                return baseTransactionData.getAddressHash();
+            }
+        }
+        return null;
+    }
+
+    public BigDecimal getRollingReserveAmount() {
+        for (BaseTransactionData baseTransactionData : baseTransactions) {
+            if (baseTransactionData instanceof RollingReserveData) {
+                return baseTransactionData.getAmount();
+            }
+        }
+        return null;
+    }
+
     @Override
     public int compareTo(TransactionData other) {
-        try {
-            return Double.compare(this.senderTrustScore, other.senderTrustScore);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return -1;
+        return Double.compare(this.senderTrustScore, other.senderTrustScore);
     }
 
     @Override

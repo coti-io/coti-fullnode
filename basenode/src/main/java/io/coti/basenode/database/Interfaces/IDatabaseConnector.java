@@ -14,5 +14,7 @@ public interface IDatabaseConnector {
 
     boolean isEmpty(String columnFamilyName);
 
+    void init();
+
     void shutdown();
 }

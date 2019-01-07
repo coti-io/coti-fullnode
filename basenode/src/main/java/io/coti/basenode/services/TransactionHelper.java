@@ -2,9 +2,10 @@ package io.coti.basenode.services;
 
 import com.google.common.collect.Sets;
 import io.coti.basenode.crypto.DspConsensusCrypto;
-import io.coti.basenode.crypto.TransactionCryptoWrapper;
+import io.coti.basenode.crypto.TransactionCrypto;
 import io.coti.basenode.crypto.TransactionTrustScoreCrypto;
 import io.coti.basenode.data.*;
+import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
 import io.coti.basenode.http.GetTransactionBatchResponse;
 import io.coti.basenode.model.AddressTransactionsHistories;
 import io.coti.basenode.model.TransactionIndexes;
@@ -34,6 +35,8 @@ public class TransactionHelper implements ITransactionHelper {
     @Autowired
     private AddressTransactionsHistories addressTransactionsHistories;
     @Autowired
+    private TransactionCrypto transactionCrypto;
+    @Autowired
     private IBalanceService balanceService;
     @Autowired
     private IConfirmationService confirmationService;
@@ -62,6 +65,7 @@ public class TransactionHelper implements ITransactionHelper {
         log.info("{} is up", this.getClass().getSimpleName());
     }
 
+    @Override
     public boolean validateBaseTransactionAmounts(List<BaseTransactionData> baseTransactions) {
         BigDecimal totalTransactionSum = BigDecimal.ZERO;
         for (BaseTransactionData baseTransactionData :
@@ -69,6 +73,11 @@ public class TransactionHelper implements ITransactionHelper {
             totalTransactionSum = totalTransactionSum.add(baseTransactionData.getAmount());
         }
         return totalTransactionSum.compareTo(BigDecimal.ZERO) == 0;
+    }
+
+    public boolean validateBaseTransactionsDataIntegrity(TransactionData transactionData) {
+        List<BaseTransactionData> baseTransactions = transactionData.getBaseTransactions();
+        return validateBaseTransactionAmounts(baseTransactions) && validateBaseTransactionTrustScoreNodeResults(transactionData);
     }
 
     private void updateAddressTransactionHistory(TransactionData transactionData) {
@@ -84,8 +93,55 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     public boolean validateTransactionCrypto(TransactionData transactionData) {
-        TransactionCryptoWrapper verifyTransaction = new TransactionCryptoWrapper(transactionData);
-        return verifyTransaction.isTransactionValid();
+        return transactionCrypto.isTransactionValid(transactionData);
+
+    }
+
+    public boolean validateTransactionType(TransactionData transactionData) {
+        try {
+            TransactionType transactionType = transactionData.getType();
+            if (transactionType == null) {
+                log.error("Transaction {} has null type", transactionData.getHash());
+                return false;
+            }
+
+            return TransactionTypeValidation.valueOf(transactionType.toString()).validateBaseTransactions(transactionData);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    @Override
+    public boolean validateBaseTransactionTrustScoreNodeResults(TransactionData transactionData) {
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (ITrustScoreNodeValidatable.class.isAssignableFrom(baseTransactionData.getClass()) && validateBaseTransactionTrustScoreNodeResult((ITrustScoreNodeValidatable) baseTransactionData) == false) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean validateBaseTransactionTrustScoreNodeResult(ITrustScoreNodeValidatable trustScoreNodeValidatable) {
+        try {
+            return isTrustScoreNodeResultValid(trustScoreNodeValidatable.getTrustScoreNodeResult());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean isTrustScoreNodeResultValid(List<TrustScoreNodeResultData> trustScoreNodeResult) {
+        if (trustScoreNodeResult.size() != 3) {
+            return false;
+        }
+        int validNumber = 0;
+        for (TrustScoreNodeResultData trustScoreNodeResultData : trustScoreNodeResult) {
+            validNumber += trustScoreNodeResultData.isValid() ? 1 : 0;
+        }
+        return validNumber >= 2;
     }
 
     public boolean isTransactionExists(TransactionData transactionData) {
@@ -103,17 +159,12 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     private boolean isTransactionHashInDB(Hash transactionHash) {
-        if (transactions.getByHash(transactionHash) != null) {
-            return true;
-        }
-        return false;
+        return transactions.getByHash(transactionHash) != null;
     }
 
-    private boolean isTransactionHashProcessing(Hash transactionHash) {
-        if (transactionHashToTransactionStateStackMapping.containsKey(transactionHash)) {
-            return true;
-        }
-        return false;
+    @Override
+    public boolean isTransactionHashProcessing(Hash transactionHash) {
+        return transactionHashToTransactionStateStackMapping.containsKey(transactionHash);
     }
 
     public boolean isTransactionAlreadyPropagated(TransactionData transactionData) {
@@ -277,7 +328,7 @@ public class TransactionHelper implements ITransactionHelper {
 
     @Override
     public boolean isDspConfirmed(TransactionData transactionData) {
-        return transactionData.getDspConsensusResult() != null && transactionData.getDspConsensusResult().isDspConsensus();
+        return transactionData.getDspConsensusResult() != null && transactionData.getDspConsensusResult().isDspConsensus() && transactionIndexes.getByHash(new Hash(transactionData.getDspConsensusResult().getIndex())) != null;
     }
 
     @Override
@@ -310,5 +361,14 @@ public class TransactionHelper implements ITransactionHelper {
 
     public void removeNoneIndexedTransaction(TransactionData transactionData) {
         noneIndexedTransactionHashes.remove(transactionData.getHash());
+    }
+
+    public PaymentInputBaseTransactionData getPaymentInputBaseTransaction(TransactionData transactionData) {
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (baseTransactionData instanceof PaymentInputBaseTransactionData) {
+                return (PaymentInputBaseTransactionData) baseTransactionData;
+            }
+        }
+        return null;
     }
 }

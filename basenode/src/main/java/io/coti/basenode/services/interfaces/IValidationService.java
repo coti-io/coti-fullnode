@@ -3,10 +3,9 @@ package io.coti.basenode.services.interfaces;
 import io.coti.basenode.data.BaseTransactionData;
 import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
+import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
 
 public interface IValidationService {
-
-    boolean validateBaseTransaction(BaseTransactionData baseTransactionData, Hash transactionHash);
 
     boolean validateSource(Hash hash);
 
@@ -23,6 +22,8 @@ public interface IValidationService {
     boolean validateBaseTransactionAmounts(TransactionData transactionData);
 
     boolean validateBalancesAndAddToPreBalance(TransactionData transactionData);
+
+    <T extends BaseTransactionData & ITrustScoreNodeValidatable> boolean validateBaseTransactionTrustScoreNodeResult(T baseTransactionData);
 
     boolean partialValidation(TransactionData transactionData);
 
