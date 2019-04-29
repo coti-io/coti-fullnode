@@ -1,8 +1,9 @@
 package io.coti.fullnode.controllers;
 
 import io.coti.basenode.data.Hash;
+import io.coti.basenode.http.Response;
 import io.coti.basenode.http.data.AddressStatus;
-import io.coti.basenode.services.interfaces.IValidationService;
+import io.coti.basenode.http.interfaces.IResponse;
 import io.coti.fullnode.http.AddAddressResponse;
 import io.coti.fullnode.http.AddressBulkRequest;
 import io.coti.fullnode.http.AddressRequest;
@@ -14,12 +15,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.validation.Valid;
+import java.util.List;
 
-import static org.springframework.web.bind.annotation.RequestMethod.POST;
-import static org.springframework.web.bind.annotation.RequestMethod.PUT;
+import static io.coti.basenode.http.BaseNodeHttpStringConstants.INVALID_ADDRESS;
+import static io.coti.basenode.http.BaseNodeHttpStringConstants.STATUS_ERROR;
 
 @Slf4j
 @RestController
@@ -29,13 +32,10 @@ public class AddressController {
     @Autowired
     private AddressService addressService;
 
-    @Autowired
-    private IValidationService validationService;
+    @RequestMapping(method = RequestMethod.PUT)
+    public ResponseEntity<IResponse> addAddress(@Valid @RequestBody AddressRequest addAddressRequest) {
 
-    @RequestMapping(method = PUT)
-    public ResponseEntity<AddAddressResponse> addAddress(@Valid @RequestBody AddressRequest addAddressRequest) {
-
-        if (addressLengthValidation(addAddressRequest.getAddress())) {
+        if (addressService.validateAddress(addAddressRequest.getAddress())) {
             if (addressService.addAddress(addAddressRequest.getAddress())) {
                 return ResponseEntity
                         .status(HttpStatus.CREATED)
@@ -49,24 +49,20 @@ public class AddressController {
                     addAddressRequest.getAddress().getBytes().length);
             return ResponseEntity
                     .status(HttpStatus.BAD_REQUEST)
-                    .body(new AddAddressResponse("", AddressStatus.Exists));
+                    .body(new Response(String.format(INVALID_ADDRESS, addAddressRequest.getAddress()), STATUS_ERROR));
         }
     }
 
-    @RequestMapping(method = POST)
+    @RequestMapping(method = RequestMethod.POST)
     public ResponseEntity<AddressesExistsResponse> addressExists(@Valid @RequestBody AddressBulkRequest addressRequest) {
-        Hash[] addressesHash = addressRequest.getAddresses();
+        List<Hash> addressHashes = addressRequest.getAddresses();
         AddressesExistsResponse addressResponse = new AddressesExistsResponse();
 
-        for (Hash addressHash : addressesHash) {
+        addressHashes.forEach(addressHash -> {
             boolean result = addressService.addressExists(addressHash);
             addressResponse.addAddressToResult(addressHash.toHexString(), result);
-        }
+        });
 
         return ResponseEntity.status(HttpStatus.OK).body(addressResponse);
-    }
-
-    private boolean addressLengthValidation(Hash address) {
-        return validationService.validateAddress(address);
     }
 }

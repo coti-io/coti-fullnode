@@ -40,7 +40,7 @@ public class BaseNodeTransactionService implements ITransactionService {
             log.debug("Transaction already exists: {}", transactionData.getHash());
             return;
         }
-        List<Hash> childrenTransactions = transactionData.getChildrenTransactions();
+        List<Hash> childrenTransactions = transactionData.getChildrenTransactionHashes();
         try {
             transactionHelper.startHandleTransaction(transactionData);
             while (hasOneOfParentsProcessing(transactionData)) {
@@ -66,19 +66,14 @@ public class BaseNodeTransactionService implements ITransactionService {
 
             continueHandlePropagatedTransaction(transactionData);
             transactionHelper.setTransactionStateToFinished(transactionData);
-            List<TransactionData> postponedParentTransactions = postponedTransactions.stream().filter(
-                    postponedTransactionData ->
-                            (postponedTransactionData.getRightParentHash() != null && postponedTransactionData.getRightParentHash().equals(transactionData.getHash())) ||
-                                    (postponedTransactionData.getLeftParentHash() != null && postponedTransactionData.getLeftParentHash().equals(transactionData.getHash())))
-                    .collect(Collectors.toList());
-            postponedParentTransactions.forEach(postponedTransaction -> {
-                log.debug("Handling postponed transaction : {}, parent of transaction: {}", postponedTransaction.getHash(), transactionData.getHash());
-                postponedTransactions.remove(postponedTransaction);
-                handlePropagatedTransaction(postponedTransaction);
-            });
         } catch (InterruptedException e) {
+            log.info("Transaction thread wait interrupted");
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.error("Transaction propagation handler error:");
             e.printStackTrace();
         } finally {
+            boolean isTransactionFinished = transactionHelper.isTransactionFinished(transactionData);
             transactionHelper.endHandleTransaction(transactionData);
             for (Hash childrenTransactionHash : childrenTransactions) {
                 TransactionData childrenTransaction = parentProcessingTransactions.get(childrenTransactionHash);
@@ -88,11 +83,28 @@ public class BaseNodeTransactionService implements ITransactionService {
                         parentProcessingTransactions.remove(childrenTransactionHash);
                     }
             }
+            if (isTransactionFinished) {
+                List<TransactionData> postponedParentTransactions = postponedTransactions.stream().filter(
+                        postponedTransactionData ->
+                                (postponedTransactionData.getRightParentHash() != null && postponedTransactionData.getRightParentHash().equals(transactionData.getHash())) ||
+                                        (postponedTransactionData.getLeftParentHash() != null && postponedTransactionData.getLeftParentHash().equals(transactionData.getHash())))
+                        .collect(Collectors.toList());
+                postponedParentTransactions.forEach(postponedTransaction -> {
+                    log.debug("Handling postponed transaction : {}, parent of transaction: {}", postponedTransaction.getHash(), transactionData.getHash());
+                    postponedTransactions.remove(postponedTransaction);
+                    handlePropagatedTransaction(postponedTransaction);
+                });
+            }
+
         }
 
     }
 
     protected void continueHandlePropagatedTransaction(TransactionData transactionData) {
+    }
+
+    public void addToExplorerIndexes(TransactionData transactionData) {
+
     }
 
     private boolean hasOneOfParentsProcessing(TransactionData transactionData) {

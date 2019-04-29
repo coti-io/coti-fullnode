@@ -4,6 +4,7 @@ import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.interfaces.IEntity;
 import io.coti.basenode.database.Interfaces.IDatabaseConnector;
 import io.coti.basenode.model.*;
+import io.coti.basenode.model.Collection;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.SerializationUtils;
 
 import java.io.File;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Paths;
 import java.util.*;
 
@@ -20,31 +23,13 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
     @Value("${database.folder.name}")
     private String databaseFolderName;
     protected List<String> columnFamilyClassNames;
-
     @Value("${application.name}")
     private String applicationName;
-    @Value("${resetDatabase}")
-    private boolean resetDatabase;
     private String dbPath;
     private List<ColumnFamilyDescriptor> columnFamilyDescriptors = new ArrayList<>();
     private RocksDB db;
     private Map<String, ColumnFamilyHandle> classNameToColumnFamilyHandleMapping = new LinkedHashMap<>();
     private List<ColumnFamilyHandle> columnFamilyHandles = new ArrayList<>();
-
-
-    private void deleteDatabaseFolder() {
-        File index = new File(dbPath);
-        if (!index.exists()) {
-            return;
-        }
-        String[] entries = index.list();
-        for (String s : entries) {
-            File currentFile = new File(index.getPath(), s);
-            currentFile.delete();
-        }
-        index.delete();
-    }
-
 
     public void init() {
         setColumnFamily();
@@ -60,16 +45,16 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
                 Addresses.class.getName(),
                 AddressTransactionsHistories.class.getName(),
                 TransactionIndexes.class.getName(),
-                TransactionVotes.class.getName()
+                TransactionVotes.class.getName(),
+                NodeRegistrations.class.getName()
         ));
 
     }
 
     public void init(String dbPath) {
         this.dbPath = dbPath;
-        if (resetDatabase) {
-            deleteDatabaseFolder();
-        }
+
+        initColumnFamilyClasses();
         initiateColumnFamilyDescriptors();
         try {
             loadLibrary();
@@ -83,6 +68,17 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             log.error("Error initiating Rocks DB");
             e.printStackTrace();
         }
+    }
+
+    private void initColumnFamilyClasses() {
+        for (int i = 1; i < columnFamilyClassNames.size(); i++) {
+            try {
+                ((Constructor<? extends Collection<? extends IEntity>>) Class.forName(columnFamilyClassNames.get(i)).getConstructor()).newInstance().init();
+            } catch (ClassNotFoundException | IllegalAccessException | InstantiationException | InvocationTargetException | NoSuchMethodException e) {
+                e.printStackTrace();
+            }
+        }
+
     }
 
     private void populateColumnFamilies() {
@@ -136,12 +132,41 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
     @Override
     public boolean put(String columnFamilyName, byte[] key, byte[] value) {
         try {
-            db.put(
-                    classNameToColumnFamilyHandleMapping.get(columnFamilyName),
-                    key,
-                    value);
+            db.put(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key, value);
             return true;
         } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    @Override
+    public boolean put(String columnFamilyName, WriteOptions writeOptions, byte[] key, byte[] value) {
+        try {
+            db.put(classNameToColumnFamilyHandleMapping.get(columnFamilyName), writeOptions, key, value);
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    @Override
+    public boolean put(String columnFamilyName, WriteBatch writeBatch, byte[] key, byte[] value) {
+        try {
+            writeBatch.put(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key, value);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @Override
+    public boolean putBatch(WriteBatch writeBatch) {
+        try {
+            db.write(new WriteOptions(), writeBatch);
+            return true;
+        } catch (RocksDBException e) {
             e.printStackTrace();
             return false;
         }

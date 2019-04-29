@@ -12,8 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -79,6 +79,12 @@ public enum BaseTransactionCrypto implements IBaseTransactionCrypto {
                 e.printStackTrace();
                 return new byte[0];
             }
+        }
+
+        @Override
+        public void signMessage(TransactionData transactionData, BaseTransactionData baseTransactionData, int index) throws ClassNotFoundException {
+            baseTransactionData.setSignature(nodeCryptoHelper.signMessage(this.getSignatureMessage(transactionData), index));
+
         }
     },
     NetworkFeeData {
@@ -151,7 +157,7 @@ public enum BaseTransactionCrypto implements IBaseTransactionCrypto {
 
         @Override
         public boolean verifySignature(TransactionData transactionData, BaseTransactionData baseTransactionData) {
-            if (TransactionType.Transfer.equals(transactionData.getType())) {
+            if (EnumSet.of(TransactionType.Transfer, TransactionType.Initial).contains(transactionData.getType())) {
                 return true;
             }
             try {
@@ -221,8 +227,8 @@ public enum BaseTransactionCrypto implements IBaseTransactionCrypto {
     }
 
     @Override
-    public void signMessage(TransactionData transactionData, BaseTransactionData baseTransactionData) throws ClassNotFoundException {
-        baseTransactionData.setSignature(nodeCryptoHelper.signMessage(this.getSignatureMessage(transactionData)));
+    public void signMessage(TransactionData transactionData, BaseTransactionData baseTransactionData, int index) throws ClassNotFoundException {
+        baseTransactionData.setSignature(nodeCryptoHelper.signMessage(this.getSignatureMessage(transactionData), index));
 
     }
 
@@ -297,14 +303,11 @@ public enum BaseTransactionCrypto implements IBaseTransactionCrypto {
         String decimalStringRepresentation = baseTransactionData.getAmount().stripTrailingZeros().toPlainString();
         byte[] bytesOfAmount = decimalStringRepresentation.getBytes(StandardCharsets.UTF_8);
 
-        Date baseTransactionDate = baseTransactionData.getCreateTime();
-        int timestamp = (int) (baseTransactionDate.getTime());
+        Instant createTime = baseTransactionData.getCreateTime();
+        byte[] createTimeInBytes = ByteBuffer.allocate(Long.BYTES).putLong(createTime.toEpochMilli()).array();
 
-        ByteBuffer dateBuffer = ByteBuffer.allocate(4);
-        dateBuffer.putInt(timestamp);
-
-        ByteBuffer baseTransactionBuffer = ByteBuffer.allocate(addressBytes.length + bytesOfAmount.length + dateBuffer.array().length).
-                put(addressBytes).put(bytesOfAmount).put(dateBuffer.array());
+        ByteBuffer baseTransactionBuffer = ByteBuffer.allocate(addressBytes.length + bytesOfAmount.length + createTimeInBytes.length).
+                put(addressBytes).put(bytesOfAmount).put(createTimeInBytes);
 
         return baseTransactionBuffer.array();
     }

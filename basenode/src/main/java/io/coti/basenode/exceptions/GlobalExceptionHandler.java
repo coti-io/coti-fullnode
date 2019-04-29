@@ -2,6 +2,7 @@ package io.coti.basenode.exceptions;
 
 import io.coti.basenode.http.ExceptionResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -42,6 +43,12 @@ public class GlobalExceptionHandler {
         return responseEntity;
     }
 
+    @ExceptionHandler(ClientAbortException.class)
+    public void handleClientAbortException(ClientAbortException e) {
+        log.info("Client aborted");
+        log.info("Exception: {}", e.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity handleDefaultException(Exception e) {
         log.error("{} for a request.", e.getClass().getSimpleName());
@@ -55,7 +62,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity handleTransactionException(TransactionException e) {
         log.error("An error while adding transaction, performing a rollback procedure", e);
         ResponseEntity responseEntity = new ResponseEntity(
-                new ExceptionResponse(STATUS_ERROR, TRANSACTION_ROLLBACK_MESSAGE), HttpStatus.INTERNAL_SERVER_ERROR);
+                new ExceptionResponse(TRANSACTION_ROLLBACK_MESSAGE, API_SERVER_ERROR), HttpStatus.INTERNAL_SERVER_ERROR);
         return responseEntity;
     }
 }

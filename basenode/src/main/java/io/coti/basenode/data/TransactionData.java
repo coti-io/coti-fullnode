@@ -7,7 +7,10 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
-import java.util.*;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Vector;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -20,26 +23,19 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     private Hash leftParentHash;
     private Hash rightParentHash;
     private List<Hash> trustChainTransactionHashes;
-    private Hash userTrustScoreTokenHashes;
     private boolean trustChainConsensus;
     private double trustChainTrustScore;
-    private Date transactionConsensusUpdateTime;
-    private Date createTime;
-    private Date attachmentTime;
-    private Date processStartTime;
-    private Date powStartTime;
-    private Date powEndTime;
+    private Instant transactionConsensusUpdateTime;
+    private Instant createTime;
+    private Instant attachmentTime;
     private double senderTrustScore;
     private Hash senderHash;
     private SignatureData senderSignature;
     private Hash nodeHash;
     private SignatureData nodeSignature;
-    private List<Hash> childrenTransactions;
+    private List<Hash> childrenTransactionHashes;
     private Boolean valid;
-    private Map<String, Boolean> validByNodes;
     private transient boolean isVisit;
-    private boolean isZeroSpend;
-    private boolean isGenesis;
     private String transactionDescription;
     private DspConsensusResult dspConsensusResult;
     private List<TransactionTrustScoreData> trustScoreResults;
@@ -52,12 +48,12 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         this.baseTransactions = baseTransactions;
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, double senderTrustScore, Date createTime, TransactionType type) {
+    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, double senderTrustScore, Instant createTime, TransactionType type) {
         this(baseTransactions, transactionDescription, senderTrustScore, createTime, type);
         this.hash = transactionHash;
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, String transactionDescription, double senderTrustScore, Date createTime, TransactionType type) {
+    public TransactionData(List<BaseTransactionData> baseTransactions, String transactionDescription, double senderTrustScore, Instant createTime, TransactionType type) {
         this.transactionDescription = transactionDescription;
         this.baseTransactions = baseTransactions;
         this.createTime = createTime;
@@ -71,13 +67,14 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         this.initTransactionData();
     }
 
-    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, List<TransactionTrustScoreData> trustScoreResults, Date createTime, Hash senderHash, TransactionType type) {
+    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, List<TransactionTrustScoreData> trustScoreResults, Instant createTime, Hash senderHash, SignatureData senderSignature, TransactionType type) {
         this.hash = transactionHash;
         this.transactionDescription = transactionDescription;
         this.baseTransactions = baseTransactions;
         this.createTime = createTime;
         this.type = type;
         this.senderHash = senderHash;
+        this.senderSignature = senderSignature;
         this.trustScoreResults = trustScoreResults;
         BigDecimal amount = BigDecimal.ZERO;
         for (BaseTransactionData baseTransaction : baseTransactions) {
@@ -87,10 +84,13 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         this.initTransactionData();
     }
 
+    public TransactionData(List<BaseTransactionData> baseTransactions, Hash transactionHash, String transactionDescription, List<TransactionTrustScoreData> trustScoreResults, Instant createTime, Hash senderHash, TransactionType type) {
+        this(baseTransactions, transactionHash, transactionDescription, trustScoreResults, createTime, senderHash, null, type);
+    }
+
     private void initTransactionData() {
         this.trustChainTransactionHashes = new Vector<>();
-        this.childrenTransactions = new LinkedList<>();
-        this.processStartTime = (new Date());
+        this.childrenTransactionHashes = new ArrayList<>();
     }
 
     public int getRoundedSenderTrustScore() {
@@ -98,11 +98,15 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     }
 
     public boolean isSource() {
-        return childrenTransactions == null || childrenTransactions.size() == 0;
+        return childrenTransactionHashes == null || childrenTransactionHashes.size() == 0;
+    }
+
+    public boolean isGenesis() {
+        return leftParentHash == null && rightParentHash == null;
     }
 
     public void addToChildrenTransactions(Hash hash) {
-        childrenTransactions.add(hash);
+        childrenTransactionHashes.add(hash);
     }
 
     @Override
@@ -131,10 +135,6 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         return getLeftParentHash() != null || getRightParentHash() != null;
     }
 
-    public void addNodesToTransaction(Map<String, Boolean> validByNodes) {
-        this.validByNodes.putAll(validByNodes);
-    }
-
     public Boolean isValid() {
         return valid;
     }
@@ -145,35 +145,6 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
 
     public List<InputBaseTransactionData> getInputBaseTransactions() {
         return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData.isInput()).map(InputBaseTransactionData.class::cast).collect(Collectors.toList());
-    }
-
-    public Hash getReceiverBaseTransactionHash() {
-
-        for (BaseTransactionData baseTransactionData : baseTransactions) {
-            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
-                return baseTransactionData.getHash();
-            }
-        }
-        return null;
-    }
-
-    public Hash getReceiverBaseTransactionAddressHash() {
-
-        for (BaseTransactionData baseTransactionData : baseTransactions) {
-            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
-                return baseTransactionData.getAddressHash();
-            }
-        }
-        return null;
-    }
-
-    public BigDecimal getRollingReserveAmount() {
-        for (BaseTransactionData baseTransactionData : baseTransactions) {
-            if (baseTransactionData instanceof RollingReserveData) {
-                return baseTransactionData.getAmount();
-            }
-        }
-        return null;
     }
 
     @Override

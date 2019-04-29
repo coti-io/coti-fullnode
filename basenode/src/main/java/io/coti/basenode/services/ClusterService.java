@@ -55,6 +55,7 @@ public class ClusterService implements IClusterService {
             sourceListsByTrustScore.get(transactionData.getRoundedSenderTrustScore()).add(transactionData);
             totalSources.incrementAndGet();
         }
+        removeTransactionParentsFromSources(transactionData);
     }
 
     @Override
@@ -81,8 +82,8 @@ public class ClusterService implements IClusterService {
 
     @Override
     public void attachToCluster(TransactionData transactionData) {
-        if (transactionData.getChildrenTransactions() == null) {
-            transactionData.setChildrenTransactions(new LinkedList<>());
+        if (transactionData.getChildrenTransactionHashes() == null) {
+            transactionData.setChildrenTransactionHashes(new ArrayList<>());
         }
 
         updateParents(transactionData);
@@ -121,7 +122,7 @@ public class ClusterService implements IClusterService {
         TransactionData transactionData = transactions.getByHash(transactionHash);
         if (sourceListsByTrustScore.get(transactionData.getRoundedSenderTrustScore()).contains(transactionData)) {
             sourceListsByTrustScore.get(transactionData.getRoundedSenderTrustScore()).remove(transactionData);
-            liveViewService.updateNodeStatus(transactionData, 1);
+            liveViewService.updateTransactionStatus(transactionData, 1);
             totalSources.decrementAndGet();
         }
     }

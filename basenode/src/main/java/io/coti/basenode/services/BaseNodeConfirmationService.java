@@ -10,7 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -33,6 +33,7 @@ public class BaseNodeConfirmationService implements IConfirmationService {
     private Transactions transactions;
     private BlockingQueue<ConfirmationData> confirmationQueue;
     private Map<Long, DspConsensusResult> waitingDspConsensusResults = new ConcurrentHashMap<>();
+    private Map<Long, TransactionData> waitingMissingTransactionIndexes = new ConcurrentHashMap<>();
     private AtomicLong totalConfirmed = new AtomicLong(0);
     private AtomicLong tccConfirmed = new AtomicLong(0);
     private AtomicLong dspConfirmed = new AtomicLong(0);
@@ -104,11 +105,11 @@ public class BaseNodeConfirmationService implements IConfirmationService {
     }
 
     private void processConfirmedTransaction(TransactionData transactionData) {
-        transactionData.setTransactionConsensusUpdateTime(new Date());
+        transactionData.setTransactionConsensusUpdateTime(Instant.now());
         transactionData.getBaseTransactions().forEach(baseTransactionData -> balanceService.updateBalance(baseTransactionData.getAddressHash(), baseTransactionData.getAmount()));
         totalConfirmed.incrementAndGet();
 
-        liveViewService.updateNodeStatus(transactionData, 2);
+        liveViewService.updateTransactionStatus(transactionData, 2);
 
         transactionData.getBaseTransactions().forEach(baseTransactionData -> {
             Hash addressHash = baseTransactionData.getAddressHash();
@@ -143,11 +144,57 @@ public class BaseNodeConfirmationService implements IConfirmationService {
     }
 
     @Override
+    public void insertMissingTransaction(TransactionData transactionData) {
+        transactionData.getBaseTransactions().forEach(baseTransactionData -> balanceService.updatePreBalance(baseTransactionData.getAddressHash(), baseTransactionData.getAmount()));
+        if (transactionData.isTrustChainConsensus()) {
+            tccConfirmed.incrementAndGet();
+        }
+        if (transactionData.getDspConsensusResult() == null) {
+            transactionHelper.addNoneIndexedTransaction(transactionData);
+        } else {
+            if (insertMissingTransactionIndex(transactionData)) {
+                return;
+            }
+            if (transactionHelper.isDspConfirmed(transactionData)) {
+                dspConfirmed.incrementAndGet();
+            }
+        }
+
+    }
+
+    private boolean insertMissingTransactionIndex(TransactionData transactionData) {
+        DspConsensusResult dspConsensusResult = transactionData.getDspConsensusResult();
+        if (!transactionIndexService.insertNewTransactionIndex(transactionData)) {
+            waitingMissingTransactionIndexes.put(dspConsensusResult.getIndex(), transactionData);
+            return false;
+        } else {
+            processMissingDspConfirmedTransaction(transactionData);
+            long index = dspConsensusResult.getIndex() + 1;
+            while (waitingMissingTransactionIndexes.containsKey(index)) {
+                TransactionData waitingMissingTransactionData = waitingMissingTransactionIndexes.get(index);
+                transactionIndexService.insertNewTransactionIndex(waitingMissingTransactionData);
+                processMissingDspConfirmedTransaction(waitingMissingTransactionData);
+                waitingMissingTransactionIndexes.remove(index);
+                index++;
+            }
+            return true;
+        }
+    }
+
+    private void processMissingDspConfirmedTransaction(TransactionData transactionData) {
+        dspConfirmed.incrementAndGet();
+        if (transactionData.isTrustChainConsensus()) {
+            transactionData.getBaseTransactions().forEach(baseTransactionData -> balanceService.updateBalance(baseTransactionData.getAddressHash(), baseTransactionData.getAmount()));
+            totalConfirmed.incrementAndGet();
+        }
+    }
+
+    @Override
     public void setTccToTrue(TccInfo tccInfo) {
         try {
             confirmationQueue.put(tccInfo);
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -156,7 +203,7 @@ public class BaseNodeConfirmationService implements IConfirmationService {
         try {
             confirmationQueue.put(dspConsensusResult);
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -181,6 +228,7 @@ public class BaseNodeConfirmationService implements IConfirmationService {
         try {
             confirmedTransactionsThread.join();
         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             log.error("Interrupted shutdown {}", this.getClass().getSimpleName());
         }
 

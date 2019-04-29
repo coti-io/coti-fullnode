@@ -5,6 +5,7 @@ basenode/target/
 zerospend/target/
 tools/target/
 trustscore/target/
+nodemanager/target/
 logs/
 !.mvn/wrapper/maven-wrapper.jar
 dsp*.properties
@@ -12,6 +13,9 @@ fullnode*.properties
 trustscore*.properties
 zerospend*.properties
 financialserver*.properties
+nodemanager*.properties
+*.csv
+*.json
 
 ### STS ###
 .apt_generated
@@ -46,6 +50,7 @@ ZeroSpendrocksDB*/
 initialDatabase/
 ZeroSpendServerrocksDB*/
 FinancialServerrocksDB*/
+NodeManagerrocksDB*/
 
 *.jar
 *.class

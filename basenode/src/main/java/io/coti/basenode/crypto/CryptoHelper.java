@@ -33,7 +33,6 @@ public class CryptoHelper {
     private static final ECDomainParameters domain = new ECDomainParameters(curve.getCurve(), curve.getG(), curve.getN(), curve.getH());
     private static final ECParameterSpec spec = new ECParameterSpec(curve.getCurve(), curve.getG(), curve.getN(), curve.getH());
 
-
     public static PublicKey getPublicKeyFromHexString(String pubKeyHex) throws NoSuchAlgorithmException, InvalidKeySpecException {
         String pointX = pubKeyHex.substring(0, (pubKeyHex.length() / 2));
         String pointY = pubKeyHex.substring(pubKeyHex.length() / 2);
@@ -48,7 +47,6 @@ public class CryptoHelper {
         PublicKey pubKey = keyfac.generatePublic(publicSpec);
         return pubKey;
     }
-
 
     private static PublicKey getPublicKeyFromByte(byte[] pubKey) throws NoSuchAlgorithmException, InvalidKeySpecException {
         org.bouncycastle.math.ec.ECPoint point = curve.getCurve().decodePoint(pubKey);
@@ -67,7 +65,6 @@ public class CryptoHelper {
 
         byte[] xPointPart = new byte[0];
         byte[] yPointPart = new byte[0];
-
 
         for (int i = 0; i < xPart.length; i++) {
             if (xPart[i] == 0)
@@ -94,7 +91,7 @@ public class CryptoHelper {
 
         byte[] privateKey = DatatypeConverter.parseHexBinary(privateKeyHex);
         ECDSASigner signer = new ECDSASigner();
-        signer.init(true, new ECPrivateKeyParameters(new BigInteger(privateKey), domain));
+        signer.init(true, new ECPrivateKeyParameters(new BigInteger(1, privateKey), domain));
         BigInteger[] signature = signer.generateSignature(bytesToSign);
         BigInteger r = signature[0];
         BigInteger s = signature[1];
@@ -103,10 +100,23 @@ public class CryptoHelper {
 
     public static String GetPublicKeyFromPrivateKey(String privateKeyHex) {
         byte[] privateKey = DatatypeConverter.parseHexBinary(privateKeyHex);
-        ECPoint curvePt = domain.getG().multiply(new BigInteger(privateKey));
+        ECPoint curvePt = domain.getG().multiply(new BigInteger(1, privateKey));
         curvePt = curvePt.normalize();
         String x = curvePt.getXCoord().toBigInteger().toString(16);
         String y = curvePt.getYCoord().toBigInteger().toString(16);
+        return paddingPublicKey(x, y);
+    }
+
+    private static String paddingPublicKey(String x, String y) {
+        String paddingLetter = "0";
+
+        while (x.length() < 64) {
+            x = paddingLetter + x;
+        }
+
+        while (y.length() < 64) {
+            y = paddingLetter + y;
+        }
         return x + y;
     }
 
@@ -140,7 +150,6 @@ public class CryptoHelper {
 
         byte[] checksumValue = ByteBuffer.allocate(4).putInt((int) checksum.getValue()).array();
         return Arrays.equals(checksumValue, addressCheckSum);
-
     }
 
     private static byte[] getCrc32OfByteArray(byte[] array) {
@@ -163,7 +172,7 @@ public class CryptoHelper {
 
     public static Hash generatePrivateKey(String seed, Integer addressIndex) {
 
-        byte[] seedInBytes = seed.getBytes();
+        byte[] seedInBytes = DatatypeConverter.parseHexBinary(seed);
 
         int byteBufferLength = 4 + seedInBytes.length;
 

@@ -9,4 +9,6 @@ public interface ITransactionService {
     void handlePropagatedTransaction(TransactionData transactionData);
 
     int totalPostponedTransactions();
+
+    void addToExplorerIndexes(TransactionData transactionData);
 }

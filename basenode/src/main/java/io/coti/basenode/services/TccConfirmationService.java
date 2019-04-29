@@ -8,7 +8,7 @@ import org.springframework.beans.factory.annotation.Configurable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Vector;
@@ -45,7 +45,7 @@ public class TccConfirmationService {
     private void setTotalTrustScore(TransactionData parent) {
         double maxSonsTotalTrustScore = 0;
         Hash maxSonsTotalTrustScoreHash = null;
-        for (Hash hash : parent.getChildrenTransactions()) {
+        for (Hash hash : parent.getChildrenTransactionHashes()) {
             try {
                 TransactionData child = hashToTccUnConfirmTransactionsMapping.get(hash);
                 if (child != null && child.getTrustChainTrustScore()
@@ -72,7 +72,7 @@ public class TccConfirmationService {
     }
 
     private void topologicalSortingHelper(TransactionData parentTransactionData) {
-        for (Hash transactionDataHash : parentTransactionData.getChildrenTransactions()) {
+        for (Hash transactionDataHash : parentTransactionData.getChildrenTransactionHashes()) {
             TransactionData childTransactionData = hashToTccUnConfirmTransactionsMapping.get(transactionDataHash);
             if (childTransactionData != null && !childTransactionData.isVisit()) {
                 topologicalSortingHelper(childTransactionData);
@@ -92,7 +92,7 @@ public class TccConfirmationService {
             setTotalTrustScore(transaction);
             if (transaction.getTrustChainTrustScore() >= threshold) {
                 transaction.setTrustChainConsensus(true);
-                transaction.setTransactionConsensusUpdateTime(new Date());
+                transaction.setTransactionConsensusUpdateTime(Instant.now());
                 TccInfo tccInfo = new TccInfo(transaction.getHash(), transaction.getTrustChainTransactionHashes()
                         , transaction.getTrustChainTrustScore());
 

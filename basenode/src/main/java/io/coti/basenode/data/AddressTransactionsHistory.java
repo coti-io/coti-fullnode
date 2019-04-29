@@ -1,29 +1,31 @@
 package io.coti.basenode.data;
 
 
+import com.google.common.collect.Sets;
 import io.coti.basenode.data.interfaces.IEntity;
 import lombok.Data;
 
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Data
 public class AddressTransactionsHistory implements IEntity {
 
     private transient Hash hash;
-    private Date creationTime;
-    private List<Hash> transactionsHistory;
+    private Instant creationTime;
+    private Set<Hash> transactionsHistory;
 
 
     public AddressTransactionsHistory(Hash hash) {
         this.hash = hash;
-        creationTime = new Date();
-        transactionsHistory = new ArrayList<>();
+        creationTime = Instant.now();
+        transactionsHistory = Sets.newConcurrentHashSet();
     }
 
-    public void addTransactionHashToHistory(Hash transactionHash) {
-        transactionsHistory.add(transactionHash);
+    public boolean addTransactionHashToHistory(Hash transactionHash) {
+        return transactionsHistory.add(transactionHash);
     }
 
     @Override

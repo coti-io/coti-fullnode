@@ -80,16 +80,38 @@ public class TransactionHelper implements ITransactionHelper {
         return validateBaseTransactionAmounts(baseTransactions) && validateBaseTransactionTrustScoreNodeResults(transactionData);
     }
 
-    private void updateAddressTransactionHistory(TransactionData transactionData) {
-        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+    @Override
+    public void updateAddressTransactionHistory(TransactionData transactionData) {
+        transactionData.getBaseTransactions().forEach(baseTransactionData -> {
             AddressTransactionsHistory addressHistory = addressTransactionsHistories.getByHash(baseTransactionData.getAddressHash());
 
             if (addressHistory == null) {
                 addressHistory = new AddressTransactionsHistory(baseTransactionData.getAddressHash());
             }
-            addressHistory.addTransactionHashToHistory(transactionData.getHash());
+            if (!addressHistory.addTransactionHashToHistory(transactionData.getHash())) {
+                log.debug("Transaction {} is already in history of address {}", transactionData.getHash(), baseTransactionData.getAddressHash());
+            }
             addressTransactionsHistories.put(addressHistory);
-        }
+        });
+    }
+
+    public void updateAddressTransactionHistory(Map<Hash, AddressTransactionsHistory> addressToTransactionsHistoryMap, TransactionData transactionData) {
+
+        transactionData.getBaseTransactions().forEach(baseTransactionData -> {
+            AddressTransactionsHistory addressHistory;
+            if (!addressToTransactionsHistoryMap.containsKey(baseTransactionData.getAddressHash())) {
+                addressHistory = addressTransactionsHistories.getByHash(baseTransactionData.getAddressHash());
+                if (addressHistory == null) {
+                    addressHistory = new AddressTransactionsHistory(baseTransactionData.getAddressHash());
+                }
+            } else {
+                addressHistory = addressToTransactionsHistoryMap.get(baseTransactionData.getAddressHash());
+            }
+            if (!addressHistory.addTransactionHashToHistory(transactionData.getHash())) {
+                log.debug("Transaction {} is already in history of address {}", transactionData.getHash(), baseTransactionData.getAddressHash());
+            }
+            addressToTransactionsHistoryMap.put(baseTransactionData.getAddressHash(), addressHistory);
+        });
     }
 
     public boolean validateTransactionCrypto(TransactionData transactionData) {
@@ -219,7 +241,7 @@ public class TransactionHelper implements ITransactionHelper {
         if (!transactionHashToTransactionStateStackMapping.containsKey(transactionData.getHash())) {
             return;
         }
-        if (transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).peek() == FINISHED) {
+        if (isTransactionFinished(transactionData)) {
             log.debug("Transaction {} handled successfully", transactionData.getHash());
         } else {
             rollbackTransaction(transactionData);
@@ -230,10 +252,16 @@ public class TransactionHelper implements ITransactionHelper {
         }
     }
 
+    @Override
+    public boolean isTransactionFinished(TransactionData transactionData) {
+        return transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).peek().equals(FINISHED);
+    }
+
     private void rollbackTransaction(TransactionData transactionData) {
         Stack<TransactionState> currentTransactionStateStack = transactionHashToTransactionStateStackMapping.get(transactionData.getHash());
         while (!currentTransactionStateStack.isEmpty()) {
-            switch (currentTransactionStateStack.pop()) {
+            TransactionState transactionState = currentTransactionStateStack.pop();
+            switch (transactionState) {
                 case PRE_BALANCE_CHANGED:
                     revertPreBalance(transactionData);
                     break;
@@ -243,8 +271,10 @@ public class TransactionHelper implements ITransactionHelper {
                 case RECEIVED:
                     transactionHashToTransactionStateStackMapping.remove(transactionData.getHash());
                     break;
-                default:
+                default: {
+                    log.error("Transaction {} has a state {} which is illegal in rollback scenario", transactionData, transactionState);
                     throw new IllegalArgumentException("Invalid transaction state");
+                }
             }
         }
     }
@@ -271,10 +301,10 @@ public class TransactionHelper implements ITransactionHelper {
 
     public void attachTransactionToCluster(TransactionData transactionData) {
         transactionData.setTrustChainConsensus(false);
-        transactionData.setTrustChainTransactionHashes(new LinkedList<>());
+        transactionData.setTrustChainTransactionHashes(new Vector<>());
         transactionData.setTrustChainTrustScore(0);
         transactionData.setTransactionConsensusUpdateTime(null);
-        transactionData.setChildrenTransactions(new LinkedList<>());
+        transactionData.setChildrenTransactionHashes(new ArrayList<>());
         transactions.put(transactionData);
         totalTransactions.incrementAndGet();
         if (transactionData.getDspConsensusResult() == null) {
@@ -283,7 +313,7 @@ public class TransactionHelper implements ITransactionHelper {
             confirmationService.setDspcToTrue(transactionData.getDspConsensusResult());
         }
         updateAddressTransactionHistory(transactionData);
-        liveViewService.addNode(transactionData);
+        liveViewService.addTransaction(transactionData);
         clusterService.attachToCluster(transactionData);
     }
 
@@ -307,7 +337,7 @@ public class TransactionHelper implements ITransactionHelper {
             return false;
         }
         if (transactionData.getDspConsensusResult() != null) {
-            log.error("DspConsensus result already exists for transaction: {}", dspConsensusResult.getHash());
+            log.debug("DspConsensus result already exists for transaction: {}", dspConsensusResult.getHash());
             return false;
         }
         if (dspConsensusResult.isDspConsensus()) {
@@ -332,6 +362,48 @@ public class TransactionHelper implements ITransactionHelper {
     }
 
     @Override
+    public Hash getReceiverBaseTransactionAddressHash(TransactionData transactionData) {
+
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
+                return baseTransactionData.getAddressHash();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Hash getReceiverBaseTransactionHash(TransactionData transactionData) {
+
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (baseTransactionData instanceof ReceiverBaseTransactionData) {
+                return baseTransactionData.getHash();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public BigDecimal getRollingReserveAmount(TransactionData transactionData) {
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (baseTransactionData instanceof RollingReserveData) {
+                return baseTransactionData.getAmount();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public PaymentInputBaseTransactionData getPaymentInputBaseTransaction(TransactionData transactionData) {
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (baseTransactionData instanceof PaymentInputBaseTransactionData) {
+                return (PaymentInputBaseTransactionData) baseTransactionData;
+            }
+        }
+        return null;
+    }
+
+    @Override
     public long getTotalTransactions() {
         return totalTransactions.get();
     }
@@ -344,15 +416,34 @@ public class TransactionHelper implements ITransactionHelper {
     @Override
     public GetTransactionBatchResponse getTransactionBatch(long startingIndex) {
         List<TransactionData> transactionsToSend = new LinkedList<>();
+        AtomicLong indexedTransactionNumber = new AtomicLong(0);
         if (startingIndex > transactionIndexService.getLastTransactionIndexData().getIndex()) {
             return new GetTransactionBatchResponse(transactionsToSend);
         }
+        Thread monitorIndexedTransactionBatch = monitorIndexedTransactionBatch(Thread.currentThread().getId(), indexedTransactionNumber);
+        monitorIndexedTransactionBatch.start();
         for (long i = startingIndex; i <= transactionIndexService.getLastTransactionIndexData().getIndex(); i++) {
             transactionsToSend.add(transactions.getByHash(transactionIndexes.getByHash(new Hash(i)).getTransactionHash()));
+            indexedTransactionNumber.incrementAndGet();
         }
+        monitorIndexedTransactionBatch.interrupt();
         transactionsToSend.addAll(noneIndexedTransactionHashes.stream().map(hash -> transactions.getByHash(hash)).collect(Collectors.toList()));
         transactionsToSend.sort(Comparator.comparing(transactionData -> transactionData.getAttachmentTime()));
         return new GetTransactionBatchResponse(transactionsToSend);
+    }
+
+    private Thread monitorIndexedTransactionBatch(long threadId, AtomicLong indexedTransactionNumber) {
+        return new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(5000);
+                    log.info("Transaction batch: thread id = {}, indexedTransactionNumber= {}", threadId, indexedTransactionNumber);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.info("Transaction batch: thread id = {}, indexedTransactionNumber= {}", threadId, indexedTransactionNumber);
+                }
+            }
+        });
     }
 
     public void addNoneIndexedTransaction(TransactionData transactionData) {
@@ -361,14 +452,5 @@ public class TransactionHelper implements ITransactionHelper {
 
     public void removeNoneIndexedTransaction(TransactionData transactionData) {
         noneIndexedTransactionHashes.remove(transactionData.getHash());
-    }
-
-    public PaymentInputBaseTransactionData getPaymentInputBaseTransaction(TransactionData transactionData) {
-        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
-            if (baseTransactionData instanceof PaymentInputBaseTransactionData) {
-                return (PaymentInputBaseTransactionData) baseTransactionData;
-            }
-        }
-        return null;
     }
 }

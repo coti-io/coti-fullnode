@@ -2,9 +2,11 @@ package io.coti.basenode.services;
 
 import io.coti.basenode.crypto.CryptoHelper;
 import io.coti.basenode.crypto.TransactionCrypto;
+import io.coti.basenode.crypto.TransactionSenderCrypto;
 import io.coti.basenode.data.BaseTransactionData;
 import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
+import io.coti.basenode.data.TransactionType;
 import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
 import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.interfaces.IPotService;
@@ -12,6 +14,8 @@ import io.coti.basenode.services.interfaces.ITransactionHelper;
 import io.coti.basenode.services.interfaces.IValidationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.util.EnumSet;
 
 
 @Service
@@ -22,6 +26,8 @@ public class ValidationService implements IValidationService {
     private ITransactionHelper transactionHelper;
     @Autowired
     private TransactionCrypto transactionCrypto;
+    @Autowired
+    private TransactionSenderCrypto transactionSenderCrypto;
     @Autowired
     private IPotService potService;
 
@@ -46,7 +52,7 @@ public class ValidationService implements IValidationService {
     @Override
     public boolean validateTransactionDataIntegrity(TransactionData transactionData) {
         return transactionHelper.validateTransactionType(transactionData) && transactionHelper.validateTransactionCrypto(transactionData)
-                && transactionHelper.validateBaseTransactionsDataIntegrity(transactionData);
+                && transactionHelper.validateBaseTransactionsDataIntegrity(transactionData) && validateTransactionSenderSignature(transactionData);
     }
 
     @Override
@@ -59,6 +65,11 @@ public class ValidationService implements IValidationService {
     @Override
     public boolean validateTransactionNodeSignature(TransactionData transactionData) {
         return transactionCrypto.verifySignature(transactionData);
+    }
+
+    @Override
+    public boolean validateTransactionSenderSignature(TransactionData transactionData) {
+        return EnumSet.of(TransactionType.ZeroSpend, TransactionType.Initial).contains(transactionData.getType()) || transactionSenderCrypto.verifySignature(transactionData);
     }
 
     @Override
@@ -94,6 +105,6 @@ public class ValidationService implements IValidationService {
 
     @Override
     public boolean validatePot(TransactionData transactionData) {
-        return potService.validatePot(transactionData);
+        return EnumSet.of(TransactionType.ZeroSpend, TransactionType.Initial).contains(transactionData.getType()) || potService.validatePot(transactionData);
     }
 }

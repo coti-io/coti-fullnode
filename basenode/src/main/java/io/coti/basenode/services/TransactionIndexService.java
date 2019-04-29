@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -25,8 +27,10 @@ public class TransactionIndexService {
     @Autowired
     private Transactions transactions;
     private TransactionIndexData lastTransactionIndexData;
+    private Map<Long, TransactionData> waitingMissingTransactionIndexes = new ConcurrentHashMap<>();
 
     public void init(AtomicLong maxTransactionIndex) throws Exception {
+        log.info("Started to initialize {}", this.getClass().getSimpleName());
         byte[] accumulatedHash = "GENESIS".getBytes();
         TransactionIndexData transactionIndexData = new TransactionIndexData(new Hash(-1), -1, "GENESIS".getBytes());
         TransactionIndexData nextTransactionIndexData;
@@ -52,6 +56,7 @@ public class TransactionIndexService {
             }
         } finally {
             lastTransactionIndexData = transactionIndexData;
+            log.info("Finished to initialize {}", this.getClass().getSimpleName());
         }
     }
 

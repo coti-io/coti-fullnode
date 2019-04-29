@@ -18,19 +18,22 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 @Slf4j
 @Service
 public class FeeService {
+    private static final int FULL_NODE_FEE_ADDRESS_INDEX = 0;
     @Value("${minimumFee}")
     private BigDecimal minimumFee;
     @Value("${maximumFee}")
     private BigDecimal maximumFee;
-    @Value("${feePercentage}")
+    @Value("${fee.percentage}")
     private BigDecimal feePercentage;
+    @Value("${fullnode.seed}")
+    private String seed;
     @Autowired
     private NodeCryptoHelper nodeCryptoHelper;
 
@@ -40,7 +43,7 @@ public class FeeService {
             Hash address = this.getAddress();
             BigDecimal fee = originalAmount.multiply(feePercentage).divide(new BigDecimal(100));
             BigDecimal amount = fee.compareTo(minimumFee) <= 0 ? minimumFee : fee.compareTo(maximumFee) >= 0 ? maximumFee : fee;
-            FullNodeFeeData fullNodeFeeData = new FullNodeFeeData(address, amount, originalAmount, new Date());
+            FullNodeFeeData fullNodeFeeData = new FullNodeFeeData(address, amount, originalAmount, Instant.now());
             setFullNodeFeeHash(fullNodeFeeData);
             signFullNodeFee(fullNodeFeeData);
             FullNodeFeeResponseData fullNodeFeeResponseData = new FullNodeFeeResponseData(fullNodeFeeData);
@@ -53,7 +56,7 @@ public class FeeService {
     }
 
     public Hash getAddress() {
-        return nodeCryptoHelper.getNodeAddress();
+        return nodeCryptoHelper.generateAddress(seed, FULL_NODE_FEE_ADDRESS_INDEX);
     }
 
     public void setFullNodeFeeHash(FullNodeFeeData fullNodeFeeData) throws ClassNotFoundException {
@@ -63,6 +66,6 @@ public class FeeService {
     public void signFullNodeFee(FullNodeFeeData fullNodeFeeData) throws ClassNotFoundException {
         List<BaseTransactionData> baseTransactions = new ArrayList<>();
         baseTransactions.add(fullNodeFeeData);
-        BaseTransactionCrypto.FullNodeFeeData.signMessage(new TransactionData(baseTransactions), fullNodeFeeData);
+        BaseTransactionCrypto.FullNodeFeeData.signMessage(new TransactionData(baseTransactions), fullNodeFeeData, FULL_NODE_FEE_ADDRESS_INDEX);
     }
 }

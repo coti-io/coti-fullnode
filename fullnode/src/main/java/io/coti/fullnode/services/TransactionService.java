@@ -1,6 +1,5 @@
 package io.coti.fullnode.services;
 
-import io.coti.basenode.communication.interfaces.ISender;
 import io.coti.basenode.crypto.TransactionCrypto;
 import io.coti.basenode.data.AddressTransactionsHistory;
 import io.coti.basenode.data.Hash;
@@ -14,31 +13,34 @@ import io.coti.basenode.model.AddressTransactionsHistories;
 import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.BaseNodeTransactionService;
 import io.coti.basenode.services.interfaces.IClusterService;
+import io.coti.basenode.services.interfaces.INetworkService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
 import io.coti.basenode.services.interfaces.IValidationService;
-import io.coti.fullnode.http.AddTransactionRequest;
-import io.coti.fullnode.http.AddTransactionResponse;
-import io.coti.fullnode.http.GetAddressTransactionHistoryResponse;
-import io.coti.fullnode.http.GetTransactionResponse;
+import io.coti.fullnode.data.ExplorerIndexData;
+import io.coti.fullnode.http.*;
+import io.coti.fullnode.model.ExplorerIndexes;
+import io.coti.fullnode.websocket.WebSocketSender;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.coti.basenode.http.BaseNodeHttpStringConstants.*;
 
 @Slf4j
 @Service
 public class TransactionService extends BaseNodeTransactionService {
-    @Value("#{'${receiving.server.addresses}'.split(',')}")
-    private List<String> receivingServerAddresses;
+
+    private static final int EXPLORER_LAST_TRANSACTIONS_AMOUNT = 20;
+
+    private AtomicLong explorerIndex;
     @Autowired
     private ITransactionHelper transactionHelper;
     @Autowired
@@ -47,18 +49,24 @@ public class TransactionService extends BaseNodeTransactionService {
     private IValidationService validationService;
     @Autowired
     private IClusterService clusterService;
-
     @Autowired
-    private ISender sender;
+    private ExplorerIndexes explorerIndexes;
     @Autowired
     private AddressTransactionsHistories addressTransactionHistories;
     @Autowired
     private Transactions transactions;
     @Autowired
     private WebSocketSender webSocketSender;
-
+    @Autowired
+    private INetworkService networkService;
     @Autowired
     private PotService potService;
+
+    @Override
+    public void init() {
+        explorerIndex = new AtomicLong(0);
+        super.init();
+    }
 
     public ResponseEntity<Response> addNewTransaction(AddTransactionRequest request) {
         TransactionData transactionData =
@@ -69,6 +77,7 @@ public class TransactionService extends BaseNodeTransactionService {
                         request.trustScoreResults,
                         request.createTime,
                         request.senderHash,
+                        request.senderSignature,
                         request.type);
         try {
             log.debug("New transaction request is being processed. Transaction Hash = {}", request.hash);
@@ -141,19 +150,27 @@ public class TransactionService extends BaseNodeTransactionService {
                 //TODO: Implement an invalidation mechanism for TestNet.
             }
 
-            transactionData.setPowStartTime(new Date());
             // ############   POT   ###########
-            potService.potAction(transactionData);
+            try {
+                potService.potAction(transactionData);
+            } catch (IllegalArgumentException e) {
+                log.error("Error at POT: {} , Transaction: {}", e.getMessage(), transactionData.getHash());
+                return ResponseEntity
+                        .status(HttpStatus.UNAUTHORIZED)
+                        .body(new AddTransactionResponse(
+                                STATUS_ERROR,
+                                e.getMessage()));
+            }
             // ################################
-            transactionData.setPowEndTime(new Date());
 
-            transactionData.setAttachmentTime(new Date());
+            transactionData.setAttachmentTime(Instant.now());
 
             transactionHelper.attachTransactionToCluster(transactionData);
             transactionHelper.setTransactionStateToSaved(transactionData);
             webSocketSender.notifyTransactionHistoryChange(transactionData, TransactionStatus.ATTACHED_TO_DAG);
+            addToExplorerIndexes(transactionData);
             final TransactionData finalTransactionData = transactionData;
-            receivingServerAddresses.forEach(address -> sender.send(finalTransactionData, address));
+            ((NetworkService) networkService).sendDataToConnectedDspNodes(finalTransactionData);
             transactionHelper.setTransactionStateToFinished(transactionData);
             return ResponseEntity
                     .status(HttpStatus.CREATED)
@@ -181,7 +198,7 @@ public class TransactionService extends BaseNodeTransactionService {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Thread.currentThread().interrupt();
 
             }
             retryTimes--;
@@ -200,7 +217,7 @@ public class TransactionService extends BaseNodeTransactionService {
             try {
                 TimeUnit.SECONDS.sleep(2);
             } catch (InterruptedException e) {
-                log.error("Errors when sleeping: ", e);
+                Thread.currentThread().interrupt();
             }
             clusterService.selectSources(transactionData);
         }
@@ -214,13 +231,36 @@ public class TransactionService extends BaseNodeTransactionService {
             if (addressTransactionsHistory == null) {
                 return ResponseEntity.status(HttpStatus.OK).body(new GetAddressTransactionHistoryResponse(transactionsDataList));
             }
-
-            for (Hash transactionHash : addressTransactionsHistory.getTransactionsHistory()) {
+            addressTransactionsHistory.getTransactionsHistory().forEach(transactionHash -> {
                 TransactionData transactionData = transactions.getByHash(transactionHash);
                 transactionsDataList.add(transactionData);
-
-            }
+            });
             return ResponseEntity.status(HttpStatus.OK).body(new GetAddressTransactionHistoryResponse(transactionsDataList));
+        } catch (Exception e) {
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new Response(
+                            ADDRESS_TRANSACTIONS_SERVER_ERROR,
+                            STATUS_ERROR));
+        }
+    }
+
+    public ResponseEntity<IResponse> getLastTransactions() {
+        List<TransactionData> transactionsDataList = new ArrayList<>();
+        ExplorerIndexData explorerIndexData;
+        long currentExplorerIndex = explorerIndex.get();
+
+        for (int i = 0; i < EXPLORER_LAST_TRANSACTIONS_AMOUNT; i++) {
+            if (currentExplorerIndex - i < 1) {
+                break;
+            }
+            explorerIndexData = explorerIndexes.getByHash(new Hash(currentExplorerIndex - i));
+            transactionsDataList.add(transactions.getByHash(explorerIndexData.getTransactionHash()));
+        }
+
+        try {
+            return ResponseEntity.status(HttpStatus.OK).body(new GetTransactionsResponse(transactionsDataList) {
+            });
         } catch (Exception e) {
             return ResponseEntity
                     .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -250,12 +290,21 @@ public class TransactionService extends BaseNodeTransactionService {
                             TRANSACTION_DETAILS_SERVER_ERROR,
                             STATUS_ERROR));
         }
-
     }
+
+    private long incrementAndGetExplorerIndex() {
+        return explorerIndex.incrementAndGet();
+    }
+
+    @Override
+    public void addToExplorerIndexes(TransactionData transactionData) {
+        explorerIndexes.put(new ExplorerIndexData(incrementAndGetExplorerIndex(), transactionData.getHash()));
+    }
+
 
     @Override
     protected void continueHandlePropagatedTransaction(TransactionData transactionData) {
         webSocketSender.notifyTransactionHistoryChange(transactionData, TransactionStatus.ATTACHED_TO_DAG);
+        addToExplorerIndexes(transactionData);
     }
-
 }
