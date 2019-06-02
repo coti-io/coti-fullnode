@@ -4,13 +4,13 @@ import io.coti.basenode.data.interfaces.IEntity;
 import io.coti.basenode.data.interfaces.ISignValidatable;
 import io.coti.basenode.data.interfaces.ISignable;
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
 
 import java.util.Objects;
 
-@Slf4j
 @Data
 public class NetworkNodeData implements IEntity, ISignable, ISignValidatable {
+
+    private static final long serialVersionUID = 1827712996893751649L;
     private Hash nodeHash;
     private NodeType nodeType;
     private String address;
@@ -20,10 +20,13 @@ public class NetworkNodeData implements IEntity, ISignable, ISignValidatable {
     private String recoveryServerAddress;
     private NetworkType networkType;
     private transient Double trustScore;
+    private String webServerUrl;
     private FeeData feeData;
     private SignatureData nodeSignature;
     private NodeRegistrationData nodeRegistrationData;
 
+    public NetworkNodeData() {
+    }
 
     public NetworkNodeData(NodeType nodeType, String address, String httpPort, Hash nodeHash, NetworkType networkType) {
         this.nodeType = nodeType;
@@ -31,14 +34,6 @@ public class NetworkNodeData implements IEntity, ISignable, ISignValidatable {
         this.httpPort = httpPort;
         this.nodeHash = nodeHash;
         this.networkType = networkType;
-    }
-
-    public NetworkNodeData(NodeType nodeType, String address, String httpPort, Hash nodeHash, NetworkType networkType, FeeData feeData) {
-        this(nodeType, address, httpPort, nodeHash, networkType);
-        this.feeData = feeData;
-    }
-
-    public NetworkNodeData() {
     }
 
     @Override
@@ -103,6 +98,8 @@ public class NetworkNodeData implements IEntity, ISignable, ISignValidatable {
         receivingPort = networkNodeData.getReceivingPort();
         recoveryServerAddress = networkNodeData.getRecoveryServerAddress();
         networkType = networkNodeData.getNetworkType();
+        webServerUrl = networkNodeData.getWebServerUrl();
+        feeData = networkNodeData.getFeeData();
         nodeSignature = networkNodeData.getNodeSignature();
         nodeRegistrationData = networkNodeData.getNodeRegistrationData();
     }

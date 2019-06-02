@@ -2,17 +2,19 @@ package io.coti.basenode.data;
 
 import lombok.Data;
 
-import java.util.List;
+import java.time.Instant;
 
 @Data
 public class TccInfo extends ConfirmationData {
-    private Hash hash;
-    private List<Hash> trustChainTransactionHashes;
-    private double trustChainTrustScore;
 
-    public TccInfo(Hash hash, List<Hash> trustChainTransactionHashes, double trustChainTrustScore) {
+    private static final long serialVersionUID = -7959572670527143220L;
+    private Hash hash;
+    private double trustChainTrustScore;
+    private Instant trustChainConsensusTime;
+
+    public TccInfo(Hash hash, double trustChainTrustScore, Instant trustChainConsensusTime) {
         this.hash = hash;
-        this.trustChainTransactionHashes = trustChainTransactionHashes;
         this.trustChainTrustScore = trustChainTrustScore;
+        this.trustChainConsensusTime = trustChainConsensusTime;
     }
 }

@@ -1,7 +1,9 @@
 package io.coti.basenode.services;
 
+import io.coti.basenode.communication.JacksonSerializer;
 import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
+import io.coti.basenode.model.TransactionIndexes;
 import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
 import io.coti.basenode.services.interfaces.ITransactionService;
@@ -10,10 +12,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletResponse;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -26,12 +31,68 @@ public class BaseNodeTransactionService implements ITransactionService {
     private IValidationService validationService;
     @Autowired
     private Transactions transactions;
+    @Autowired
+    private TransactionIndexService transactionIndexService;
+    @Autowired
+    private JacksonSerializer jacksonSerializer;
+    @Autowired
+    private TransactionIndexes transactionIndexes;
     private Map<Hash, TransactionData> parentProcessingTransactions = new ConcurrentHashMap<>();
     private List<TransactionData> postponedTransactions = new LinkedList<>();
 
     @Override
     public void init() {
         log.info("{} is up", this.getClass().getSimpleName());
+    }
+
+    @Override
+    public void getTransactionBatch(long startingIndex, HttpServletResponse response) {
+
+        AtomicLong transactionNumber = new AtomicLong(0);
+        Thread monitorTransactionBatch = monitorTransactionBatch(Thread.currentThread().getId(), transactionNumber);
+
+        try {
+            ServletOutputStream output = response.getOutputStream();
+
+            if (startingIndex > transactionIndexService.getLastTransactionIndexData().getIndex()) {
+                return;
+            }
+
+            monitorTransactionBatch.start();
+
+            for (long i = startingIndex; i <= transactionIndexService.getLastTransactionIndexData().getIndex(); i++) {
+                output.write(jacksonSerializer.serialize(transactions.getByHash(transactionIndexes.getByHash(new Hash(i)).getTransactionHash())));
+                output.flush();
+                transactionNumber.incrementAndGet();
+            }
+            for (Hash hash : transactionHelper.getNoneIndexedTransactionHashes()) {
+                output.write(jacksonSerializer.serialize(transactions.getByHash(hash)));
+                output.flush();
+                transactionNumber.incrementAndGet();
+
+            }
+
+        } catch (Exception e) {
+            log.error("Error sending transaction batch");
+            log.error(e.getMessage());
+        } finally {
+            if (monitorTransactionBatch.isAlive()) {
+                monitorTransactionBatch.interrupt();
+            }
+        }
+    }
+
+    private Thread monitorTransactionBatch(long threadId, AtomicLong transactionNumber) {
+        return new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                log.info("Transaction batch: thread id = {}, transactionNumber= {}", threadId, transactionNumber);
+            }
+        });
     }
 
     @Override

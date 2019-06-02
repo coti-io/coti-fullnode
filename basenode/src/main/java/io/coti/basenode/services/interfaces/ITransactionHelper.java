@@ -2,11 +2,11 @@ package io.coti.basenode.services.interfaces;
 
 import io.coti.basenode.data.*;
 import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
-import io.coti.basenode.http.GetTransactionBatchResponse;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public interface ITransactionHelper {
 
@@ -68,9 +68,9 @@ public interface ITransactionHelper {
 
     long incrementTotalTransactions();
 
-    GetTransactionBatchResponse getTransactionBatch(long startingIndex);
-
     void addNoneIndexedTransaction(TransactionData transactionData);
 
     void removeNoneIndexedTransaction(TransactionData transactionData);
+
+    Set<Hash> getNoneIndexedTransactionHashes();
 }

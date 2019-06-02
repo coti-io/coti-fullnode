@@ -1,8 +1,7 @@
-package io.coti.fullnode.http;
+package io.coti.basenode.http;
 
 
 import io.coti.basenode.data.TransactionData;
-import io.coti.basenode.http.BaseResponse;
 import io.coti.basenode.http.data.TransactionResponseData;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;

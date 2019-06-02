@@ -4,27 +4,27 @@ import io.coti.basenode.data.interfaces.IPropagatable;
 import io.coti.basenode.data.interfaces.ISignValidatable;
 import io.coti.basenode.data.interfaces.ISignable;
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Vector;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Data
 public class TransactionData implements IPropagatable, Comparable<TransactionData>, ISignable, ISignValidatable {
+
+    private static final long serialVersionUID = 6409430318206872225L;
     private List<BaseTransactionData> baseTransactions;
     private Hash hash;
     private BigDecimal amount;
     private TransactionType type;
     private Hash leftParentHash;
     private Hash rightParentHash;
-    private List<Hash> trustChainTransactionHashes;
     private boolean trustChainConsensus;
     private double trustChainTrustScore;
+    private Instant trustChainConsensusTime;
     private Instant transactionConsensusUpdateTime;
     private Instant createTime;
     private Instant attachmentTime;
@@ -89,7 +89,6 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     }
 
     private void initTransactionData() {
-        this.trustChainTransactionHashes = new Vector<>();
         this.childrenTransactionHashes = new ArrayList<>();
     }
 
@@ -122,6 +121,11 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     }
 
     @Override
+    public int hashCode() {
+        return Arrays.hashCode(hash.getBytes());
+    }
+
+    @Override
     public Hash getHash() {
         return this.hash;
     }
@@ -140,11 +144,11 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     }
 
     public List<OutputBaseTransactionData> getOutputBaseTransactions() {
-        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData.isOutput()).map(OutputBaseTransactionData.class::cast).collect(Collectors.toList());
+        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData instanceof OutputBaseTransactionData).map(OutputBaseTransactionData.class::cast).collect(Collectors.toList());
     }
 
     public List<InputBaseTransactionData> getInputBaseTransactions() {
-        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData.isInput()).map(InputBaseTransactionData.class::cast).collect(Collectors.toList());
+        return this.getBaseTransactions().stream().filter(baseTransactionData -> baseTransactionData instanceof InputBaseTransactionData).map(InputBaseTransactionData.class::cast).collect(Collectors.toList());
     }
 
     @Override

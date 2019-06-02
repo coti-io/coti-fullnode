@@ -5,6 +5,8 @@ import io.coti.basenode.data.AddressTransactionsHistory;
 import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
 import io.coti.basenode.exceptions.TransactionException;
+import io.coti.basenode.http.CustomGson;
+import io.coti.basenode.http.GetTransactionsResponse;
 import io.coti.basenode.http.Response;
 import io.coti.basenode.http.data.TransactionResponseData;
 import io.coti.basenode.http.data.TransactionStatus;
@@ -15,7 +17,6 @@ import io.coti.basenode.services.BaseNodeTransactionService;
 import io.coti.basenode.services.interfaces.IClusterService;
 import io.coti.basenode.services.interfaces.INetworkService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
-import io.coti.basenode.services.interfaces.IValidationService;
 import io.coti.fullnode.data.ExplorerIndexData;
 import io.coti.fullnode.http.*;
 import io.coti.fullnode.model.ExplorerIndexes;
@@ -26,8 +27,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.PrintWriter;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,7 +50,7 @@ public class TransactionService extends BaseNodeTransactionService {
     @Autowired
     private TransactionCrypto transactionCrypto;
     @Autowired
-    private IValidationService validationService;
+    private ValidationService validationService;
     @Autowired
     private IClusterService clusterService;
     @Autowired
@@ -81,7 +85,7 @@ public class TransactionService extends BaseNodeTransactionService {
                         request.type);
         try {
             log.debug("New transaction request is being processed. Transaction Hash = {}", request.hash);
-            transactionCrypto.signMessage(transactionData);
+
             if (transactionHelper.isTransactionExists(transactionData)) {
                 log.debug("Received existing transaction: {}", transactionData.getHash());
                 return ResponseEntity
@@ -100,6 +104,14 @@ public class TransactionService extends BaseNodeTransactionService {
                                 AUTHENTICATION_FAILED_MESSAGE));
             }
 
+            if (!validationService.validateFullNodeFeeDataIntegrity(transactionData)) {
+                log.error("Invalid fullnode fee data: {}", transactionData.getHash());
+                return ResponseEntity
+                        .status(HttpStatus.UNAUTHORIZED)
+                        .body(new AddTransactionResponse(
+                                STATUS_ERROR,
+                                INVALID_FULL_NODE_FEE));
+            }
             if (!validationService.validateBaseTransactionAmounts(transactionData)) {
                 log.error("Illegal base transaction amounts: {}", transactionData.getHash());
                 return ResponseEntity
@@ -164,7 +176,7 @@ public class TransactionService extends BaseNodeTransactionService {
             // ################################
 
             transactionData.setAttachmentTime(Instant.now());
-
+            transactionCrypto.signMessage(transactionData);
             transactionHelper.attachTransactionToCluster(transactionData);
             transactionHelper.setTransactionStateToSaved(transactionData);
             webSocketSender.notifyTransactionHistoryChange(transactionData, TransactionStatus.ATTACHED_TO_DAG);
@@ -242,6 +254,45 @@ public class TransactionService extends BaseNodeTransactionService {
                     .body(new Response(
                             ADDRESS_TRANSACTIONS_SERVER_ERROR,
                             STATUS_ERROR));
+        }
+    }
+
+    public void getAddressTransactionBatch(GetAddressTransactionBatchRequest getAddressTransactionBatchRequest, HttpServletResponse response) {
+        try {
+            List<Hash> addresses = getAddressTransactionBatchRequest.getAddresses();
+            PrintWriter output = response.getWriter();
+            output.write("[");
+            output.flush();
+
+            Iterator<Hash> addressHashIterator = addresses.iterator();
+            while (addressHashIterator.hasNext()) {
+                Hash addressHash = addressHashIterator.next();
+                AddressTransactionsHistory addressTransactionsHistory = addressTransactionHistories.getByHash(addressHash);
+                if (addressTransactionsHistory != null) {
+                    Iterator<Hash> transactionHashIterator = addressTransactionsHistory.getTransactionsHistory().iterator();
+                    while (transactionHashIterator.hasNext()) {
+                        Hash transactionHash = transactionHashIterator.next();
+                        TransactionData transactionData = transactions.getByHash(transactionHash);
+                        if (transactionData != null) {
+                            output.write(new CustomGson().getInstance().toJson(new TransactionResponseData(transactionData)));
+                            output.flush();
+                            if (transactionHashIterator.hasNext()) {
+                                output.write(",");
+                                output.flush();
+                            }
+                        }
+                    }
+                    if (addressHashIterator.hasNext()) {
+                        output.write(",");
+                        output.flush();
+                    }
+                }
+            }
+            output.write("]");
+            output.flush();
+        } catch (Exception e) {
+            log.error("Error sending address transaction batch");
+            log.error(e.getMessage());
         }
     }
 
