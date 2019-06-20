@@ -24,11 +24,15 @@ public interface IBalanceService {
 
     void validateBalances();
 
-    void updateBalanceFromClusterStamp(Hash addressHash, BigDecimal amount) throws Exception;
+    void updateBalanceFromClusterStamp(Hash addressHash, BigDecimal amount) throws IllegalArgumentException;
 
     void updatePreBalanceFromClusterStamp();
 
     void updateBalance(Hash addressHash, BigDecimal amount);
 
     void updatePreBalance(Hash addressHash, BigDecimal amount);
+
+    BigDecimal getBalanceByAddress(Hash addressHash);
+
+    BigDecimal getPreBalanceByAddress(Hash addressHash);
 }

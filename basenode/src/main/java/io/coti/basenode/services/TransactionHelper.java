@@ -9,17 +9,19 @@ import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
 import io.coti.basenode.model.AddressTransactionsHistories;
 import io.coti.basenode.model.TransactionIndexes;
 import io.coti.basenode.model.Transactions;
-import io.coti.basenode.services.LiveView.LiveViewService;
 import io.coti.basenode.services.interfaces.IBalanceService;
 import io.coti.basenode.services.interfaces.IClusterService;
 import io.coti.basenode.services.interfaces.IConfirmationService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
+import io.coti.basenode.services.liveview.LiveViewService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -71,9 +73,25 @@ public class TransactionHelper implements ITransactionHelper {
         return totalTransactionSum.compareTo(BigDecimal.ZERO) == 0;
     }
 
+    @Override
     public boolean validateBaseTransactionsDataIntegrity(TransactionData transactionData) {
         List<BaseTransactionData> baseTransactions = transactionData.getBaseTransactions();
         return validateBaseTransactionAmounts(baseTransactions) && validateBaseTransactionTrustScoreNodeResults(transactionData);
+    }
+
+    @Override
+    public boolean validateTransactionTimeFields(TransactionData transactionData) {
+        Instant now = Instant.now();
+        for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
+            if (!transactionTimeFieldValid(now, baseTransactionData.getCreateTime())) {
+                return false;
+            }
+        }
+        return transactionTimeFieldValid(now, transactionData.getCreateTime());
+    }
+
+    private boolean transactionTimeFieldValid(Instant systemTime, Instant timeField) {
+        return timeField.isAfter(systemTime.minus(60, ChronoUnit.MINUTES)) && timeField.isBefore(systemTime.plus(10, ChronoUnit.MINUTES));
     }
 
     @Override
@@ -133,7 +151,7 @@ public class TransactionHelper implements ITransactionHelper {
     @Override
     public boolean validateBaseTransactionTrustScoreNodeResults(TransactionData transactionData) {
         for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
-            if (ITrustScoreNodeValidatable.class.isAssignableFrom(baseTransactionData.getClass()) && validateBaseTransactionTrustScoreNodeResult((ITrustScoreNodeValidatable) baseTransactionData) == false) {
+            if (ITrustScoreNodeValidatable.class.isAssignableFrom(baseTransactionData.getClass()) && !validateBaseTransactionTrustScoreNodeResult((ITrustScoreNodeValidatable) baseTransactionData)) {
                 return false;
             }
         }

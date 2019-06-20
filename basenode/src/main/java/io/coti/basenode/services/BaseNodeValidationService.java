@@ -46,7 +46,7 @@ public class BaseNodeValidationService implements IValidationService {
     @Override
     public boolean validateAddress(Hash address) {
 
-        return CryptoHelper.IsAddressValid(address);
+        return CryptoHelper.isAddressValid(address);
     }
 
     @Override
@@ -93,11 +93,6 @@ public class BaseNodeValidationService implements IValidationService {
     }
 
     @Override
-    public boolean partialValidation(TransactionData transactionData) {
-        return true;
-    }
-
-    @Override
     public boolean fullValidation(TransactionData transactionData) {
         return true;
     }
@@ -106,5 +101,10 @@ public class BaseNodeValidationService implements IValidationService {
     @Override
     public boolean validatePot(TransactionData transactionData) {
         return EnumSet.of(TransactionType.ZeroSpend, TransactionType.Initial).contains(transactionData.getType()) || potService.validatePot(transactionData);
+    }
+
+    @Override
+    public boolean validateTransactionTimeFields(TransactionData transactionData) {
+        return transactionHelper.validateTransactionTimeFields(transactionData);
     }
 }

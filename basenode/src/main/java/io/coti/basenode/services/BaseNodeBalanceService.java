@@ -72,7 +72,6 @@ public class BaseNodeBalanceService implements IBalanceService {
             balance = balanceMap.containsKey(hash) ? balanceMap.get(hash) : new BigDecimal(0);
             preBalance = preBalanceMap.containsKey(hash) ? preBalanceMap.get(hash) : new BigDecimal(0);
             getBalancesResponse.addAddressBalanceToResponse(hash, balance, preBalance);
-
         }
         return ResponseEntity.status(HttpStatus.OK).body(getBalancesResponse);
     }
@@ -102,10 +101,10 @@ public class BaseNodeBalanceService implements IBalanceService {
     }
 
     @Override
-    public void updateBalanceFromClusterStamp(Hash addressHash, BigDecimal amount) throws Exception {
+    public void updateBalanceFromClusterStamp(Hash addressHash, BigDecimal amount) throws IllegalArgumentException {
         if (balanceMap.containsKey(addressHash)) {
             log.error("The address {} was already found in the clusterstamp", addressHash);
-            throw new Exception(String.format("The address %s was already found in the clusterstamp", addressHash));
+            throw new IllegalArgumentException(String.format("The address %s was already found in the clusterstamp", addressHash));
         }
         balanceMap.put(addressHash, amount);
         log.trace("Loading from clusterstamp into inMem balance+preBalance address {} and amount {}", addressHash, amount);
@@ -128,6 +127,16 @@ public class BaseNodeBalanceService implements IBalanceService {
         preBalanceMap.computeIfPresent(addressHash, (currentHash, currentAmount) ->
                 currentAmount.add(amount));
         preBalanceMap.putIfAbsent(addressHash, amount);
+    }
+
+    @Override
+    public BigDecimal getBalanceByAddress(Hash addressHash) {
+        return  balanceMap.containsKey(addressHash) ? balanceMap.get(addressHash) : BigDecimal.ZERO;
+    }
+
+    @Override
+    public BigDecimal getPreBalanceByAddress(Hash addressHash) {
+        return  preBalanceMap.containsKey(addressHash) ? preBalanceMap.get(addressHash) : BigDecimal.ZERO;
     }
 
 }

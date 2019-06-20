@@ -9,7 +9,6 @@ public class BaseNodeHttpStringConstants {
 
     public static final String TRANSACTION_ALREADY_EXIST_MESSAGE = "Transaction already exists!";
     public static final String TRANSACTION_CREATED_MESSAGE = "Transaction created";
-    public static final String TRANSACTION_CREATION_FAILED_MESSAGE = "Transaction creation failed";
     public static final String TRANSACTION_DETAILS_SERVER_ERROR = "Transaction details server error";
     public static final String TRANSACTION_DOESNT_EXIST_MESSAGE = "Transaction doesn't exist";
     public static final String TRANSACTION_RESPONSE_ERROR = "Transaction response error";
@@ -18,7 +17,7 @@ public class BaseNodeHttpStringConstants {
 
     public static final String AUTHENTICATION_FAILED_MESSAGE = "Authentication failed!";
     public static final String INSUFFICIENT_FUNDS_MESSAGE = "Balance for address is insufficient!";
-    public static final String ILLEGAL_TRANSACTION_MESSAGE = "Illegal transaction - sum of base transactions must be 0!";
+    public static final String ILLEGAL_BASE_TRANSACTIONS_AMOUNT = "Illegal transaction - sum of base transactions must be 0!";
     public static final String INVALID_TRUST_SCORE_MESSAGE = "Invalid sender trust score!";
 
     public static final String API_CLIENT_ERROR = "Api Client Error";
@@ -34,7 +33,11 @@ public class BaseNodeHttpStringConstants {
     public static final String INVALID_NODE_REGISTRAR = "Invalid node registrar";
     public static final String INVALID_NODE_REGISTRATION_SIGNATURE = "Invalid node registration signature";
     public static final String INVALID_NETWORK_TYPE = "Network type should be %s. Invalid network type %s";
+    public static final String INVALID_TRANSACTION_TIME_FIELD = "Invalid transaction time field. Current node time: %s";
 
     public static final String UNAUTHORIZED_IP_ACCESS = "Unauthorized ip access";
     public static final String METHOD_NOT_SUPPORTED = "Unsupported method";
+
+    public static final String ADDRESS_BATCH_UPLOADED = "Address batch uploaded";
+    public static final String ADDRESS_BATCH_UPLOAD_ERROR = "Address batch upload error: %s";
 }
