@@ -56,7 +56,7 @@ public class TransactionSynchronizationService implements ITransactionSynchroniz
                 byte[] buf = new byte[Math.toIntExact(MAXIMUM_BUFFER_SIZE)];
                 int offset = 0;
                 int n;
-                while ((n = response.getBody().read(buf, offset, buf.length)) > 0) {
+                while ((n = response.getBody().read(buf, offset, buf.length - offset)) > 0) {
                     try {
                         TransactionData missingTransaction = jacksonSerializer.deserialize(buf);
                         if (missingTransaction != null) {

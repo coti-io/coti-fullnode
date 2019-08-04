@@ -4,6 +4,8 @@ import io.coti.basenode.data.BaseTransactionData;
 import io.coti.basenode.data.BaseTransactionName;
 import io.coti.basenode.data.TransactionData;
 import io.coti.basenode.data.TransactionType;
+import io.coti.basenode.exceptions.TransactionException;
+import io.coti.basenode.http.data.interfaces.ITransactionResponseData;
 import lombok.Data;
 
 import java.lang.reflect.Constructor;
@@ -16,7 +18,7 @@ import java.util.List;
 import static io.coti.basenode.http.BaseNodeHttpStringConstants.TRANSACTION_RESPONSE_ERROR;
 
 @Data
-public class TransactionResponseData {
+public class TransactionResponseData implements ITransactionResponseData {
     private String hash;
     private BigDecimal amount;
     private TransactionType type;
@@ -37,24 +39,24 @@ public class TransactionResponseData {
     public TransactionResponseData() {
     }
 
-    public TransactionResponseData(TransactionData transactionData) throws Exception {
+    public TransactionResponseData(TransactionData transactionData) {
 
         hash = transactionData.getHash().toHexString();
         amount = transactionData.getAmount();
         type = transactionData.getType();
         baseTransactions = new ArrayList<>();
         if (transactionData.getBaseTransactions() != null) {
-            for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()
-                    ) {
+            transactionData.getBaseTransactions().forEach(baseTransactionData ->
+            {
                 try {
                     Class<? extends BaseTransactionResponseData> baseTransactionResponseDataClass = BaseTransactionResponseClass.valueOf(BaseTransactionName.getName(baseTransactionData.getClass()).name()).getBaseTransactionResponseClass();
                     Constructor<? extends BaseTransactionResponseData> constructor = baseTransactionResponseDataClass.getConstructor(BaseTransactionData.class);
                     baseTransactions.add(constructor.newInstance(baseTransactionData));
                 } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | InstantiationException e) {
                     e.printStackTrace();
-                    throw new Exception(TRANSACTION_RESPONSE_ERROR);
+                    throw new TransactionException(TRANSACTION_RESPONSE_ERROR);
                 }
-            }
+            });
         }
         leftParentHash = transactionData.getLeftParentHash() == null ? null : transactionData.getLeftParentHash().toHexString();
         rightParentHash = transactionData.getRightParentHash() == null ? null : transactionData.getRightParentHash().toHexString();
