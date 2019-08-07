@@ -1,8 +1,11 @@
 package io.coti.fullnode.services;
 
+import com.dictiography.collections.IndexedNavigableSet;
+import com.dictiography.collections.IndexedTreeSet;
 import io.coti.basenode.crypto.TransactionCrypto;
 import io.coti.basenode.data.AddressTransactionsHistory;
 import io.coti.basenode.data.Hash;
+import io.coti.basenode.data.ReducedTransactionData;
 import io.coti.basenode.data.TransactionData;
 import io.coti.basenode.exceptions.TransactionException;
 import io.coti.basenode.exceptions.TransactionValidationException;
@@ -20,9 +23,7 @@ import io.coti.basenode.services.BaseNodeTransactionService;
 import io.coti.basenode.services.interfaces.IClusterService;
 import io.coti.basenode.services.interfaces.INetworkService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
-import io.coti.fullnode.data.ExplorerIndexData;
 import io.coti.fullnode.http.*;
-import io.coti.fullnode.model.ExplorerIndexes;
 import io.coti.fullnode.websocket.WebSocketSender;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,20 +35,23 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.PrintWriter;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.coti.basenode.http.BaseNodeHttpStringConstants.*;
+import static io.coti.fullnode.http.HttpStringConstants.EXPLORER_TRANSACTION_PAGE_ERROR;
 
 @Slf4j
 @Service
 public class TransactionService extends BaseNodeTransactionService {
 
-    private static final int EXPLORER_LAST_TRANSACTIONS_AMOUNT = 20;
+    private static final int EXPLORER_LAST_TRANSACTIONS_NUMBER = 20;
+    private static final int EXPLORER_TRANSACTION_NUMBER_BY_PAGE = 10;
 
-    private AtomicLong explorerIndex;
     @Autowired
     private ITransactionHelper transactionHelper;
     @Autowired
@@ -56,8 +60,6 @@ public class TransactionService extends BaseNodeTransactionService {
     private ValidationService validationService;
     @Autowired
     private IClusterService clusterService;
-    @Autowired
-    private ExplorerIndexes explorerIndexes;
     @Autowired
     private AddressTransactionsHistories addressTransactionHistories;
     @Autowired
@@ -68,10 +70,16 @@ public class TransactionService extends BaseNodeTransactionService {
     private INetworkService networkService;
     @Autowired
     private PotService potService;
+    private BlockingQueue<ReducedTransactionData> explorerIndexQueue;
+    private Thread explorerIndexThread;
+    private IndexedNavigableSet<ReducedTransactionData> explorerIndexedTransactionSet;
 
     @Override
     public void init() {
-        explorerIndex = new AtomicLong(0);
+        explorerIndexedTransactionSet = new IndexedTreeSet<>();
+        explorerIndexQueue = new LinkedBlockingQueue<>();
+        explorerIndexThread = new Thread(() -> updateExplorerIndex());
+        explorerIndexThread.start();
         super.init();
     }
 
@@ -322,15 +330,13 @@ public class TransactionService extends BaseNodeTransactionService {
 
     public ResponseEntity<IResponse> getLastTransactions() {
         List<TransactionData> transactionsDataList = new ArrayList<>();
-        ExplorerIndexData explorerIndexData;
-        long currentExplorerIndex = explorerIndex.get();
+        Iterator<ReducedTransactionData> iterator = explorerIndexedTransactionSet.descendingIterator();
+        int count = 0;
 
-        for (int i = 0; i < EXPLORER_LAST_TRANSACTIONS_AMOUNT; i++) {
-            if (currentExplorerIndex - i < 1) {
-                break;
-            }
-            explorerIndexData = explorerIndexes.getByHash(new Hash(currentExplorerIndex - i));
-            transactionsDataList.add(transactions.getByHash(explorerIndexData.getTransactionHash()));
+        while (count < EXPLORER_LAST_TRANSACTIONS_NUMBER && iterator.hasNext()) {
+            ReducedTransactionData reducedTransactionData = iterator.next();
+            transactionsDataList.add(transactions.getByHash(reducedTransactionData.getTransactionHash()));
+            count++;
         }
 
         try {
@@ -343,6 +349,27 @@ public class TransactionService extends BaseNodeTransactionService {
                             ADDRESS_TRANSACTIONS_SERVER_ERROR,
                             STATUS_ERROR));
         }
+    }
+
+    public ResponseEntity<IResponse> getTotalTransactions() {
+        return ResponseEntity.ok(new GetTotalTransactionsResponse(explorerIndexedTransactionSet.size()));
+    }
+
+    public ResponseEntity<IResponse> getTransactionsByPage(int page) {
+        int totalTransactionsNumber = explorerIndexedTransactionSet.size();
+        int index = totalTransactionsNumber - (page - 1) * EXPLORER_TRANSACTION_NUMBER_BY_PAGE;
+        if (index < 0) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new Response(EXPLORER_TRANSACTION_PAGE_ERROR, STATUS_ERROR));
+        }
+        List<TransactionData> transactionDataList = new ArrayList<>();
+        int endOfIndex = index - EXPLORER_TRANSACTION_NUMBER_BY_PAGE;
+        while (index > endOfIndex && index >= 0) {
+            TransactionData transactionData = transactions.getByHash(explorerIndexedTransactionSet.exact(index).getTransactionHash());
+            transactionDataList.add(transactionData);
+            index--;
+        }
+        return ResponseEntity.ok(new GetTransactionsResponse(transactionDataList));
+
     }
 
     public ResponseEntity<IResponse> getTransactionDetails(Hash transactionHash) {
@@ -367,13 +394,13 @@ public class TransactionService extends BaseNodeTransactionService {
         }
     }
 
-    private long incrementAndGetExplorerIndex() {
-        return explorerIndex.incrementAndGet();
-    }
-
     @Override
     public void addToExplorerIndexes(TransactionData transactionData) {
-        explorerIndexes.put(new ExplorerIndexData(incrementAndGetExplorerIndex(), transactionData.getHash()));
+        try {
+            explorerIndexQueue.put(new ReducedTransactionData(transactionData));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
 
@@ -382,4 +409,18 @@ public class TransactionService extends BaseNodeTransactionService {
         webSocketSender.notifyTransactionHistoryChange(transactionData, TransactionStatus.ATTACHED_TO_DAG);
         addToExplorerIndexes(transactionData);
     }
+
+    private void updateExplorerIndex() {
+        while (!Thread.currentThread().isInterrupted()) {
+
+            try {
+                ReducedTransactionData reducedTransactionData = explorerIndexQueue.take();
+                explorerIndexedTransactionSet.add(reducedTransactionData);
+                webSocketSender.notifyTotalTransactionsChange(explorerIndexedTransactionSet.size());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
 }
