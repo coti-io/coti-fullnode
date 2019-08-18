@@ -8,6 +8,7 @@ import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
 import io.coti.basenode.data.TransactionType;
 import io.coti.basenode.data.interfaces.ITrustScoreNodeValidatable;
+import io.coti.basenode.http.GetHistoryAddressesResponse;
 import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.interfaces.IPotService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
@@ -18,9 +19,12 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.EnumSet;
 
+import static io.coti.basenode.services.TransactionHelper.CURRENCY_SCALE;
+
 
 @Service
 public class BaseNodeValidationService implements IValidationService {
+
     @Autowired
     private Transactions transactions;
     @Autowired
@@ -111,6 +115,14 @@ public class BaseNodeValidationService implements IValidationService {
 
     @Override
     public boolean validateAmountField(BigDecimal amount) {
-        return amount != null && (amount.scale() <= 0 || amount.stripTrailingZeros().equals(amount)) && amount.scale() <= 8;
+        return amount != null && (amount.scale() <= 0 || amount.stripTrailingZeros().equals(amount)) && amount.scale() <= CURRENCY_SCALE;
     }
+
+    @Override
+    public boolean validateGetAddressesResponse(GetHistoryAddressesResponse getHistoryAddressesResponse) {
+        return !getHistoryAddressesResponse.getAddressHashesToAddresses().entrySet().stream().anyMatch(entry ->
+                entry.getValue() != null && !entry.getKey().equals(entry.getValue().getHash())
+        );
+    }
+
 }

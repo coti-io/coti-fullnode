@@ -5,6 +5,7 @@ import io.coti.basenode.pot.ComparableFutureTask;
 import io.coti.basenode.pot.PotRunnableTask;
 import io.coti.basenode.pot.PriorityExecutor;
 import io.coti.basenode.services.BaseNodePotService;
+import io.coti.fullnode.data.MonitorBucketStatistics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -33,7 +34,7 @@ public class PotService extends BaseNodePotService {
 
         int trustScore = transactionData.getRoundedSenderTrustScore();
 
-        int bucketChoice = (int) (Math.ceil(trustScore / 10) * 10);
+        int bucketChoice = (int) (Math.ceil((double) trustScore / 10) * 10);
         if (queuesPot.get(bucketChoice) == null) {
             throw new IllegalArgumentException("Illegal trust score");
         }
