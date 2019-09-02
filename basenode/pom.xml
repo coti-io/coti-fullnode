@@ -46,7 +46,7 @@
         <dependency>
             <groupId>org.rocksdb</groupId>
             <artifactId>rocksdbjni</artifactId>
-            <version>5.7.3</version>
+            <version>6.0.2</version>
         </dependency>
         <dependency>
             <groupId>commons-io</groupId>
@@ -129,6 +129,17 @@
             <groupId>indexed-tree-map</groupId>
             <artifactId>indexed-tree-map</artifactId>
             <version>1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-iam</artifactId>
+            <version>1.11.519</version>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-s3</artifactId>
+            <version>1.11.519</version>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
     <build>
