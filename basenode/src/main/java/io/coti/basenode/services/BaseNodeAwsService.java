@@ -51,11 +51,15 @@ public class BaseNodeAwsService implements IAwsService {
         TransferManager transferManager = TransferManagerBuilder.standard().withS3Client(s3Client).build();
 
         ObjectCannedAclProvider cannedAclProvider = file -> CannedAccessControlList.PublicRead;
+        Thread monitorTransferProgress = null;
         try {
             MultipleFileUpload multipleFileUpload = transferManager.uploadDirectory(bucketName, s3folderPath + "/",
                     directoryToUpload, true, null, null, cannedAclProvider);
-
+            monitorTransferProgress = monitorTransferProgress(multipleFileUpload);
+            monitorTransferProgress.start();
             multipleFileUpload.waitForCompletion();
+            monitorTransferProgress.interrupt();
+            monitorTransferProgress.join();
             if (multipleFileUpload.getProgress().getPercentTransferred() == 100) {
                 log.debug("Finished uploading files to S3");
             }
@@ -66,15 +70,24 @@ public class BaseNodeAwsService implements IAwsService {
         } catch (Exception e) {
             log.error(e.getMessage());
             throw new AwsDataTransferException(String.format("Unable to upload folder and contents to S3. Exception: %s, Error: %s", e.getClass().getName(), e.getMessage()));
+        } finally {
+            if (monitorTransferProgress != null && monitorTransferProgress.isAlive()) {
+                monitorTransferProgress.interrupt();
+            }
         }
     }
 
     @Override
     public void downloadFolderAndContents(String bucketName, String s3folderPath, String directoryToDownload) {
         TransferManager transferManager = TransferManagerBuilder.standard().withS3Client(s3Client).build();
+        Thread monitorTransferProgress = null;
         try {
             MultipleFileDownload multipleFileDownload = transferManager.downloadDirectory(bucketName, s3folderPath, new File(directoryToDownload));
+            monitorTransferProgress = monitorTransferProgress(multipleFileDownload);
+            monitorTransferProgress.start();
             multipleFileDownload.waitForCompletion();
+            monitorTransferProgress.interrupt();
+            monitorTransferProgress.join();
             if (multipleFileDownload.getProgress().getPercentTransferred() == 100) {
                 log.debug("Finished downloading files");
             }
@@ -86,6 +99,10 @@ public class BaseNodeAwsService implements IAwsService {
         } catch (Exception e) {
             log.error(e.getMessage());
             throw new AwsDataTransferException(String.format("Unable to download folder and contents to S3. Exception: %s, Error: %s", e.getClass().getName(), e.getMessage()));
+        } finally {
+            if (monitorTransferProgress != null && monitorTransferProgress.isAlive()) {
+                monitorTransferProgress.interrupt();
+            }
         }
     }
 
@@ -185,6 +202,33 @@ public class BaseNodeAwsService implements IAwsService {
         } catch (Exception e) {
             throw new AwsException(String.format("Get S3 client error. Exception: %s, Error: %s", e.getClass().getName(), e.getMessage()));
         }
+    }
+
+    private Thread monitorTransferProgress(Transfer transfer) {
+        return new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    logTransferProgress(transfer);
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    throw new AwsException(String.format("Monitor transfer progress error. Exception: %s, Error: %s", e.getClass().getName(), e.getMessage()));
+                }
+            }
+            logTransferProgress(transfer);
+        });
+    }
+
+    private void logTransferProgress(Transfer transfer) {
+        TransferProgress progress = transfer.getProgress();
+        long bytesTransferred = progress.getBytesTransferred();
+        long total = progress.getTotalBytesToTransfer();
+        Double percentDone = progress.getPercentTransferred();
+        log.info("Transfer progress: {}%", percentDone.intValue());
+        log.info("{} bytes transferred out of {}", bytesTransferred, total);
+        Transfer.TransferState transferState = transfer.getState();
+        log.info("Transfer state: " + transferState);
     }
 
 }
