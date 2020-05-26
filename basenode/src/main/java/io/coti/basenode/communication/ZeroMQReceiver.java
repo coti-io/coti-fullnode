@@ -28,24 +28,24 @@ public class ZeroMQReceiver implements IReceiver {
         receiver = zeroMQContext.socket(SocketType.ROUTER);
         receiver.bind("tcp://*:" + receivingPort);
         log.info("Zero MQ Client Connected!");
-        Thread receiverThread = new Thread(() -> {
-            runReceiveLoop();
-        });
+        Thread receiverThread = new Thread(this::runReceiveLoop);
         receiverThread.start();
     }
 
     private void runReceiveLoop() {
-        while (true) {
-            String classType = receiver.recvStr();
-            if (classNameToHandlerMapping.containsKey(classType)) {
-                log.debug("Received a new {}", classType);
-                byte[] message = receiver.recv();
-                try {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                String classType = receiver.recvStr();
+                if (classNameToHandlerMapping.containsKey(classType)) {
+                    log.debug("Received a new {}", classType);
+                    byte[] message = receiver.recv();
+
                     classNameToHandlerMapping.get(classType).
                             accept(serializer.deserialize(message));
-                } catch (ClassCastException e) {
-                    log.error("Invalid request received: " + e.getMessage());
+
                 }
+            } catch (Exception e) {
+                log.error("ZeroMQ receiver error. {}: {} ", e.getClass().getName(), e.getMessage());
             }
         }
     }

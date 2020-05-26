@@ -67,7 +67,13 @@ public class FeeService {
                 amount = new BigDecimal(0);
             } else {
                 BigDecimal fee = originalAmount.multiply(feePercentage).divide(new BigDecimal(100));
-                amount = (fee.compareTo(minimumFee) <= 0 ? minimumFee : fee.compareTo(maximumFee) >= 0 ? maximumFee : fee);
+                if (fee.compareTo(minimumFee) <= 0) {
+                    amount = minimumFee;
+                } else if (fee.compareTo(maximumFee) >= 0) {
+                    amount = maximumFee;
+                } else {
+                    amount = fee;
+                }
             }
 
             if (amount.scale() > CURRENCY_SCALE) {
@@ -96,14 +102,14 @@ public class FeeService {
         return nodeCryptoHelper.generateAddress(seed, FULL_NODE_FEE_ADDRESS_INDEX);
     }
 
-    public void setFullNodeFeeHash(FullNodeFeeData fullNodeFeeData) throws ClassNotFoundException {
-        BaseTransactionCrypto.FullNodeFeeData.setBaseTransactionHash(fullNodeFeeData);
+    public void setFullNodeFeeHash(FullNodeFeeData fullNodeFeeData) {
+        BaseTransactionCrypto.FULL_NODE_FEE_DATA.setBaseTransactionHash(fullNodeFeeData);
     }
 
-    public void signFullNodeFee(FullNodeFeeData fullNodeFeeData) throws ClassNotFoundException {
+    public void signFullNodeFee(FullNodeFeeData fullNodeFeeData) {
         List<BaseTransactionData> baseTransactions = new ArrayList<>();
         baseTransactions.add(fullNodeFeeData);
-        BaseTransactionCrypto.FullNodeFeeData.signMessage(new TransactionData(baseTransactions), fullNodeFeeData, FULL_NODE_FEE_ADDRESS_INDEX);
+        BaseTransactionCrypto.FULL_NODE_FEE_DATA.signMessage(new TransactionData(baseTransactions), fullNodeFeeData, FULL_NODE_FEE_ADDRESS_INDEX);
     }
 
     public boolean validateFeeData(FullNodeFeeData fullNodeFeeData) {

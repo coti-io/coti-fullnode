@@ -3,11 +3,13 @@ package io.coti.basenode.services;
 import io.coti.basenode.crypto.NetworkNodeCrypto;
 import io.coti.basenode.crypto.NodeRegistrationCrypto;
 import io.coti.basenode.data.*;
+import io.coti.basenode.exceptions.NetworkException;
 import io.coti.basenode.exceptions.NetworkNodeValidationException;
 import io.coti.basenode.http.CustomHttpComponentsClientHttpRequestFactory;
 import io.coti.basenode.services.interfaces.ICommunicationService;
 import io.coti.basenode.services.interfaces.INetworkService;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.validator.routines.InetAddressValidator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
@@ -21,8 +23,11 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
-import javax.validation.ValidationException;
 import java.math.BigDecimal;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,6 +43,8 @@ public class BaseNodeNetworkService implements INetworkService {
     private String kycServerPublicKey;
     @Value("${network}")
     protected NetworkType networkType;
+    @Value("${validate.server.url:true}")
+    private boolean validateServerUrl;
     private String nodeManagerPropagationAddress;
     private String connectToNetworkUrl;
     @Autowired
@@ -70,7 +77,7 @@ public class BaseNodeNetworkService implements INetworkService {
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Error at last state of network", e);
         }
     }
 
@@ -79,7 +86,12 @@ public class BaseNodeNetworkService implements INetworkService {
         log.info("New network structure received");
 
         if (!isNodeConnectedToNetwork(newNetworkData)) {
-            connectToNetwork();
+            try {
+                connectToNetwork();
+            } catch (NetworkException e) {
+                e.logMessage();
+                System.exit(SpringApplication.exit(applicationContext));
+            }
         }
     }
 
@@ -98,8 +110,7 @@ public class BaseNodeNetworkService implements INetworkService {
     public Map<Hash, NetworkNodeData> getMapFromFactory(NodeType nodeType) {
         Map<Hash, NetworkNodeData> mapToGet = multipleNodeMaps.get(nodeType);
         if (mapToGet == null) {
-            log.error("Unsupported networkNodeData type : {}", nodeType);
-            throw new IllegalArgumentException("Unsupported networkNodeData type");
+            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
         }
         return mapToGet;
     }
@@ -107,16 +118,14 @@ public class BaseNodeNetworkService implements INetworkService {
     @Override
     public NetworkNodeData getSingleNodeData(NodeType nodeType) {
         if (!singleNodeNetworkDataMap.containsKey(nodeType)) {
-            log.error("Unsupported networkNodeData type : {}", nodeType);
-            throw new IllegalArgumentException("Unsupported networkNodeData type");
+            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
         }
         return singleNodeNetworkDataMap.get(nodeType);
     }
 
     private void setSingleNodeData(NodeType nodeType, NetworkNodeData newNetworkNodeData) {
         if (!singleNodeNetworkDataMap.containsKey(nodeType)) {
-            log.error("Unsupported networkNodeData type : {}", nodeType);
-            throw new IllegalArgumentException("Unsupported networkNodeData type");
+            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
         }
         if (newNetworkNodeData != null && !newNetworkNodeData.getNodeType().equals(nodeType)) {
             log.error("Invalid networkNodeData type : {}", nodeType);
@@ -127,61 +136,34 @@ public class BaseNodeNetworkService implements INetworkService {
 
     @Override
     public void addNode(NetworkNodeData networkNodeData) {
-        try {
-            if (networkNodeData.getNodeHash() == null || networkNodeData.getNodeType() == null) {
-                log.error("Invalid networkNodeData adding request");
-                throw new IllegalArgumentException("Invalid networkNodeData adding request");
-            }
-            if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
-                setSingleNodeData(networkNodeData.getNodeType(), networkNodeData);
-            } else {
-                getMapFromFactory(networkNodeData.getNodeType()).putIfAbsent(networkNodeData.getHash(), networkNodeData);
-            }
-        } catch (IllegalArgumentException e) {
-            e.printStackTrace();
+
+        if (networkNodeData.getNodeHash() == null || networkNodeData.getNodeType() == null) {
+            log.error("Invalid networkNodeData adding request");
+            throw new IllegalArgumentException("Invalid networkNodeData adding request");
         }
+        if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
+            setSingleNodeData(networkNodeData.getNodeType(), networkNodeData);
+        } else {
+            getMapFromFactory(networkNodeData.getNodeType()).put(networkNodeData.getHash(), networkNodeData);
+        }
+
     }
 
     @Override
     public void removeNode(NetworkNodeData networkNodeData) {
-        try {
-            if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
-                setSingleNodeData(networkNodeData.getNodeType(), null);
-            } else {
-                if (getMapFromFactory(networkNodeData.getNodeType()).remove(networkNodeData.getHash()) == null) {
-                    log.info("NetworkNode {} of type {} isn't found", networkNodeData.getNodeHash(), networkNodeData.getNodeType());
-                    return;
-                }
-            }
-            log.info("NetworkNode {}  of type {} is deleted", networkNodeData.getNodeHash(), networkNodeData.getNodeType());
-        } catch (IllegalArgumentException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public boolean updateNetworkNode(NetworkNodeData networkNodeData) {
-        NetworkNodeData node;
         if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
-            node = singleNodeNetworkDataMap.get(networkNodeData.getNodeType());
+            setSingleNodeData(networkNodeData.getNodeType(), null);
         } else {
-            Map<Hash, NetworkNodeData> networkMapToChange = getMapFromFactory(networkNodeData.getNodeType());
-            node = networkMapToChange.get(networkNodeData.getNodeHash());
+            if (getMapFromFactory(networkNodeData.getNodeType()).remove(networkNodeData.getHash()) == null) {
+                log.info("NetworkNode {} of type {} isn't found", networkNodeData.getNodeHash(), networkNodeData.getNodeType());
+                return;
+            }
         }
-        if (node != null) {
-            node.setAddress(networkNodeData.getAddress());
-            node.setHttpPort(networkNodeData.getHttpPort());
-            node.setReceivingPort(networkNodeData.getReceivingPort());
-            node.setPropagationPort(networkNodeData.getPropagationPort());
-            node.setWebServerUrl(networkNodeData.getWebServerUrl());
-            node.setNodeSignature(networkNodeData.getNodeSignature());
-            node.setSignerHash(networkNodeData.getSignerHash());
-            return true;
-        }
-        return false;
+        log.info("NetworkNode {}  of type {} is deleted", networkNodeData.getNodeHash(), networkNodeData.getNodeType());
     }
 
     @Override
-    public void validateNetworkNodeData(NetworkNodeData networkNodeData) throws ValidationException {
+    public void validateNetworkNodeData(NetworkNodeData networkNodeData) {
         if (!networkNodeData.getNetworkType().equals(networkType)) {
             log.error("Invalid network type {} by node {}", networkNodeData.getNetworkType(), networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(String.format(INVALID_NETWORK_TYPE, networkType, networkNodeData.getNetworkType()));
@@ -198,9 +180,65 @@ public class BaseNodeNetworkService implements INetworkService {
             log.error("Invalid registrar node hash for node {}", networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(INVALID_NODE_REGISTRAR);
         }
+        if (networkNodeData.getNodeType().equals(NodeType.FullNode) && validateServerUrl) {
+            validateAddressAndServerUrl(networkNodeData);
+        }
+
         if (networkNodeData.getNodeType().equals(NodeType.FullNode) && !validateFeeData(networkNodeData.getFeeData())) {
             log.error("Invalid fee data for full node {}", networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(INVALID_FULL_NODE_FEE);
+        }
+    }
+
+    private void validateAddressAndServerUrl(NetworkNodeData networkNodeData) {
+        InetAddressValidator validator = InetAddressValidator.getInstance();
+        String ip = networkNodeData.getAddress();
+        if (!validator.isValidInet4Address(ip)) {
+            log.error("Invalid IP, expected IPV4, received ip {}", ip);
+            throw new NetworkNodeValidationException(INVALID_NODE_IP_VERSION);
+        }
+        String webServerUrl = networkNodeData.getWebServerUrl();
+        String protocol;
+        try {
+            protocol = getProtocol(webServerUrl);
+        } catch (Exception e) {
+            throw new NetworkNodeValidationException(INVALID_NODE_SERVER_URL, e);
+        }
+        if (!protocol.equals("https")) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_REQUIRED, webServerUrl));
+        }
+        String host = getHost(webServerUrl);
+        if (host.isEmpty()) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_EMPTY_HOST, webServerUrl));
+        }
+        InetAddress inetAddress;
+        try {
+            inetAddress = Inet4Address.getByName(host);
+        } catch (Exception e) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_UNKNOWN_HOST, webServerUrl), e);
+        }
+        String expectedIp = inetAddress.getHostAddress();
+        if (!expectedIp.equals(ip)) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_IP_FOR_SERVER_URL, webServerUrl, host, ip, expectedIp));
+        }
+    }
+
+    @Override
+    public String getHost(String webServerUrl) {
+        return getUrl(webServerUrl).getHost();
+    }
+
+    @Override
+    public String getProtocol(String webServerUrl) {
+        return getUrl(webServerUrl).getProtocol();
+    }
+
+    private URL getUrl(String webServerUrl) {
+        try {
+            return new URL(webServerUrl);
+        } catch (MalformedURLException e) {
+            log.error("Node registration requires a valid URL address: {}", webServerUrl);
+            throw new NetworkNodeValidationException(INVALID_NODE_SERVER_URL, e);
         }
     }
 
@@ -210,33 +248,17 @@ public class BaseNodeNetworkService implements INetworkService {
                 feeData.getMinimumFee().compareTo(feeData.getMaximumFee()) <= 0;
     }
 
-
-    @Override
-    public boolean isNodeExistsOnMemory(NetworkNodeData networkNodeData) {
-        try {
-            if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
-                return singleNodeNetworkDataMap.containsKey(networkNodeData.getNodeType()) &&
-                        singleNodeNetworkDataMap.get(networkNodeData.getNodeType()) != null &&
-                        singleNodeNetworkDataMap.get(networkNodeData.getNodeType()).getNodeHash().equals(networkNodeData.getNodeHash());
-            } else {
-                return getMapFromFactory(networkNodeData.getNodeType()).containsKey(networkNodeData.getHash()) &&
-                        getMapFromFactory(networkNodeData.getNodeType()).get(networkNodeData.getHash()).getNodeHash().equals(networkNodeData.getNodeHash());
-            }
-        } catch (NullPointerException e) {
-            return false;
-        }
-    }
-
     @Override
     public List<NetworkNodeData> getShuffledNetworkNodeDataListFromMapValues(NodeType nodeType) {
+
         try {
             Map<Hash, NetworkNodeData> dataMap = getMapFromFactory(nodeType);
             List<NetworkNodeData> nodeDataList = new LinkedList<>(dataMap.values());
             Collections.shuffle(nodeDataList);
             return nodeDataList;
         } catch (IllegalArgumentException e) {
-            e.printStackTrace();
-            return null;
+            log.error("Get shuffled network node list from map values", e);
+            return new LinkedList<>();
         }
     }
 
@@ -318,7 +340,7 @@ public class BaseNodeNetworkService implements INetworkService {
                     communicationService.addSender(newSingleNodeData.getReceivingFullAddress());
                 }
             }
-            if (recoveryServerAddress != null && (singleNodeData == null || singleNodeData != null && recoveryServerAddress.equals(singleNodeData.getHttpFullAddress()))) {
+            if (recoveryServerAddress != null && (singleNodeData == null || recoveryServerAddress.equals(singleNodeData.getHttpFullAddress()))) {
                 recoveryServerAddress = newSingleNodeData.getHttpFullAddress();
             }
             setSingleNodeData(singleNodeType, newSingleNodeData);
@@ -366,17 +388,18 @@ public class BaseNodeNetworkService implements INetworkService {
 
     @Override
     public void connectToNetwork() {
-        log.info("Connecting to Coti network");
-        RestTemplate restTemplate = new RestTemplate();
-        restTemplate.setRequestFactory(new CustomHttpComponentsClientHttpRequestFactory());
-
-        HttpEntity<NetworkNodeData> entity = new HttpEntity<>(networkNodeData);
         try {
+            log.info("Connecting to Coti network");
+            RestTemplate restTemplate = new RestTemplate();
+            restTemplate.setRequestFactory(new CustomHttpComponentsClientHttpRequestFactory());
+
+            HttpEntity<NetworkNodeData> entity = new HttpEntity<>(networkNodeData);
             ResponseEntity<String> response = restTemplate.exchange(connectToNetworkUrl, HttpMethod.PUT, entity, String.class);
             log.info("{}", response.getBody());
         } catch (HttpClientErrorException | HttpServerErrorException e) {
-            log.error("Unable to connect to network. Node manager error: {}", e.getResponseBodyAsString());
-            System.exit(SpringApplication.exit(applicationContext));
+            throw new NetworkException(String.format("Connect to network failed. Node manager response: %s", e.getResponseBodyAsString()));
+        } catch (Exception e) {
+            throw new NetworkException("Connect to network failed.", e);
         }
     }
 

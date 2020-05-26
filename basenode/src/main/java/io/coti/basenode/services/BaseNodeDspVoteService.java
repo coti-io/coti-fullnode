@@ -10,6 +10,7 @@ import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.interfaces.IConfirmationService;
 import io.coti.basenode.services.interfaces.IDspVoteService;
 import io.coti.basenode.services.interfaces.ITransactionHelper;
+import io.coti.basenode.services.interfaces.ITransactionPropagationCheckService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,8 @@ public class BaseNodeDspVoteService implements IDspVoteService {
     protected IPropagationPublisher propagationPublisher;
     @Autowired
     private DspConsensusCrypto dspConsensusCrypto;
+    @Autowired
+    private ITransactionPropagationCheckService transactionPropagationCheckService;
     @Autowired
     private Transactions transactions;
     private Map<Hash, DspConsensusResult> postponedDspConsensusResultsMap;
@@ -59,8 +62,10 @@ public class BaseNodeDspVoteService implements IDspVoteService {
             postponedDspConsensusResultsMap.put(dspConsensusResult.getHash(), dspConsensusResult);
             throw new DspConsensusResultException(String.format("DspConsensus result is for a non-existing transaction %s. ", dspConsensusResult.getHash()));
         }
+        transactionPropagationCheckService.removeTransactionHashFromUnconfirmed(transactionData.getHash());
         if (transactionData.getDspConsensusResult() != null) {
             log.debug("DspConsensus result already exists for transaction {}", dspConsensusResult.getHash());
+            return;
         }
         if (dspConsensusResult.isDspConsensus()) {
             log.debug("Valid vote conclusion received for transaction: {}", dspConsensusResult.getHash());
@@ -72,7 +77,7 @@ public class BaseNodeDspVoteService implements IDspVoteService {
     }
 
     protected void continueHandleVoteConclusion(DspConsensusResult dspConsensusResult) {
-        log.debug("Continue to handle vote conclusion by base node");
+        // implemented by the sub classes
     }
 
     @Override

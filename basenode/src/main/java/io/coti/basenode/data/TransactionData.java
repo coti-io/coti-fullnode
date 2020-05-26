@@ -60,11 +60,11 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         this.createTime = createTime;
         this.type = type;
         this.senderTrustScore = senderTrustScore;
-        BigDecimal amount = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
         for (BaseTransactionData baseTransaction : baseTransactions) {
-            amount = amount.add(baseTransaction.getAmount().signum() > 0 ? baseTransaction.getAmount() : BigDecimal.ZERO);
+            totalAmount = totalAmount.add(baseTransaction.getAmount().signum() > 0 ? baseTransaction.getAmount() : BigDecimal.ZERO);
         }
-        this.amount = amount;
+        this.amount = totalAmount;
         this.initTransactionData();
     }
 
@@ -77,11 +77,11 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
         this.senderHash = senderHash;
         this.senderSignature = senderSignature;
         this.trustScoreResults = trustScoreResults;
-        BigDecimal amount = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
         for (BaseTransactionData baseTransaction : baseTransactions) {
-            amount = amount.add(baseTransaction.getAmount().signum() > 0 ? baseTransaction.getAmount() : BigDecimal.ZERO);
+            totalAmount = totalAmount.add(baseTransaction.getAmount().signum() > 0 ? baseTransaction.getAmount() : BigDecimal.ZERO);
         }
-        this.amount = amount;
+        this.amount = totalAmount;
         this.initTransactionData();
     }
 
@@ -100,7 +100,7 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
 
     @JsonIgnore
     public boolean isSource() {
-        return childrenTransactionHashes == null || childrenTransactionHashes.size() == 0;
+        return childrenTransactionHashes == null || childrenTransactionHashes.isEmpty();
     }
 
     @JsonIgnore
@@ -163,8 +163,9 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
     }
 
     @Override
-    public void setSignerHash(Hash signerHash) {
-        nodeHash = signerHash;
+    @JsonIgnore
+    public SignatureData getSignature() {
+        return nodeSignature;
     }
 
     @Override
@@ -174,14 +175,13 @@ public class TransactionData implements IPropagatable, Comparable<TransactionDat
 
     @Override
     @JsonIgnore
-    public SignatureData getSignature() {
-        return nodeSignature;
+    public Hash getSignerHash() {
+        return nodeHash;
     }
 
     @Override
-    @JsonIgnore
-    public Hash getSignerHash() {
-        return nodeHash;
+    public void setSignerHash(Hash signerHash) {
+        nodeHash = signerHash;
     }
 
     @Override

@@ -29,11 +29,15 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
     private String applicationName;
     @Value("${db.drop.column.families}")
     private boolean dropNotListedColumnFamilies;
+    @Value("${reset.transactions}")
+    private boolean resetTransactions;
     @Autowired
     private ApplicationContext ctx;
     private String dbPath;
     private RocksDB db;
     protected List<String> columnFamilyClassNames;
+    protected List<String> resetColumnFamilyNames = new ArrayList<>();
+    private List<String> resetTransactionColumnFamilyNames;
     private Map<String, ColumnFamilyHandle> classNameToColumnFamilyHandleMapping = new LinkedHashMap<>();
 
     public void init() {
@@ -57,6 +61,11 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
                 TransactionVotes.class.getName(),
                 NodeRegistrations.class.getName()
         ));
+        resetTransactionColumnFamilyNames = new ArrayList<>(Arrays.asList(
+                Transactions.class.getName(),
+                AddressTransactionsHistories.class.getName(),
+                TransactionIndexes.class.getName()
+        ));
     }
 
     public void init(String dbPath) {
@@ -66,55 +75,102 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             loadLibrary();
             createDbDirectory();
             if (dropNotListedColumnFamilies) {
-                dropNotListedColumnFamilies();
+                openDBAndDropNotListedColumnFamilies();
+            } else {
+                openDB();
             }
-            openDB();
+
+            populateResetColumnFamilyNames();
+            resetColumnFamilies();
+
+        } catch (DataBaseException e) {
+            throw new DataBaseException("Error initiating Rocks DB.\n" + e.getMessage(), e);
         } catch (Exception e) {
-            if (e instanceof DataBaseException) {
-                throw new DataBaseException("Error initiating Rocks DB. " + e.getMessage());
-            }
-            throw new DataBaseException(String.format("Error initiating Rocks DB. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Error initiating Rocks DB.", e);
         }
     }
 
-    private void dropNotListedColumnFamilies() {
+    protected void populateResetColumnFamilyNames() {
+        if (resetTransactions) {
+            resetColumnFamilyNames.addAll(resetTransactionColumnFamilyNames);
+        }
+    }
+
+    private void openDBAndDropNotListedColumnFamilies() {
         try {
-            List<byte[]> dbColumnFamilies = getColumnFamiliesFromDB();
-            List<String> notListedColumnFamilies = getNotListedColumnFamilies(dbColumnFamilies);
-
-            if (!notListedColumnFamilies.isEmpty()) {
-                openDB(dbColumnFamilies);
-                for (String notListedColumnFamily : notListedColumnFamilies)
-                    db.dropColumnFamily(classNameToColumnFamilyHandleMapping.get(notListedColumnFamily));
-                closeDB();
+            List<String> dbColumnFamilyNames = getColumnFamilyNamesFromDB();
+            List<String> notListedColumnFamilyNames = getNotListedColumnNames(dbColumnFamilyNames);
+            columnFamilyClassNames.forEach(columnFamilyClassName -> {
+                if (!dbColumnFamilyNames.contains(columnFamilyClassName)) {
+                    dbColumnFamilyNames.add(columnFamilyClassName);
+                }
+            });
+            openDB(dbColumnFamilyNames);
+            if (!notListedColumnFamilyNames.isEmpty()) {
+                dropColumnFamilies(notListedColumnFamilyNames);
             }
+        } catch (DataBaseException e) {
+            throw new DataBaseException("Error at dropping not listed Rocks DB column families.\n" + e.getMessage(), e);
         } catch (Exception e) {
-            if (e instanceof DataBaseException) {
-                throw new DataBaseException("Error at dropping not listed Rocks DB column families. " + e.getMessage());
-            }
-            throw new DataBaseException(String.format("Error at dropping not listed Rocks DB column families. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Error at dropping not listed Rocks DB column families.", e);
         }
     }
 
-    private List<byte[]> getColumnFamiliesFromDB() {
+    private List<String> getColumnFamilyNamesFromDB() {
         try (Options options = new Options()) {
-            return RocksDB.listColumnFamilies(options, dbPath);
+            List<byte[]> columnFamilies = RocksDB.listColumnFamilies(options, dbPath);
+            return columnFamilies.stream().map(String::new).collect(Collectors.toList());
         } catch (Exception e) {
-            throw new DataBaseException(String.format("Error at getting column families. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Error at getting column families.", e);
         }
     }
 
-    private List<String> getNotListedColumnFamilies(List<byte[]> dbColumnFamilies) {
-        return dbColumnFamilies.stream().map(dbColumnFamily -> new String(dbColumnFamily)).filter(dbColumnFamilyName ->
+    private List<String> getNotListedColumnNames(List<String> dbColumnFamilyNames) {
+        return dbColumnFamilyNames.stream().filter(dbColumnFamilyName ->
                 !dbColumnFamilyName.equals(new String(RocksDB.DEFAULT_COLUMN_FAMILY)) && !columnFamilyClassNames.contains(dbColumnFamilyName)
         ).collect(Collectors.toList());
+    }
+
+    private void resetColumnFamilies() {
+        resetColumnFamilies(null);
+    }
+
+    private void resetColumnFamilies(List<String> resetColumnFamilyNames) {
+        resetColumnFamilyNames = Optional.ofNullable(resetColumnFamilyNames).orElse(this.resetColumnFamilyNames);
+        dropAndCreateColumnFamilies(resetColumnFamilyNames, true);
+    }
+
+    private void dropColumnFamilies(List<String> dropColumnFamilies) {
+        dropAndCreateColumnFamilies(dropColumnFamilies, false);
+    }
+
+    private void dropAndCreateColumnFamilies(List<String> columnFamilyNames, boolean create) {
+        columnFamilyNames.forEach(columnFamilyName -> {
+            ColumnFamilyHandle columnFamilyHandle = classNameToColumnFamilyHandleMapping.get(columnFamilyName);
+            try {
+                if (columnFamilyHandle != null) {
+                    db.dropColumnFamily(columnFamilyHandle);
+                    columnFamilyHandle.close();
+                    classNameToColumnFamilyHandleMapping.remove(columnFamilyName);
+                    if (create) {
+                        columnFamilyHandle = db.createColumnFamily(new ColumnFamilyDescriptor(columnFamilyName.getBytes()));
+                        classNameToColumnFamilyHandleMapping.put(columnFamilyName, columnFamilyHandle);
+                        log.info("Column family {} reset", columnFamilyName);
+                    } else {
+                        log.info("Column family {} dropped", columnFamilyName);
+                    }
+                }
+            } catch (Exception e) {
+                throw new DataBaseException("Error resetting column families.", e);
+            }
+        });
     }
 
     private void openDB() {
         openDB(null);
     }
 
-    private void openDB(List<byte[]> dbColumnFamilies) {
+    private void openDB(List<String> dbColumnFamilies) {
         try (DBOptions dbOptions = new DBOptions()) {
 
             List<ColumnFamilyDescriptor> columnFamilyDescriptors = new ArrayList<>();
@@ -125,7 +181,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             db = RocksDB.open(dbOptions, dbPath, columnFamilyDescriptors, columnFamilyHandles);
             populateColumnFamilies(dbColumnFamilies, columnFamilyHandles);
         } catch (Exception e) {
-            throw new DataBaseException(String.format("Error opening Rocks DB. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Error opening Rocks DB.", e);
         }
 
     }
@@ -135,34 +191,22 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             try {
                 ((Collection) ctx.getBean(Class.forName(columnFamilyClassNames.get(i)))).init();
             } catch (Exception e) {
-                throw new DataBaseException(String.format("Error at init column family classes. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+                throw new DataBaseException("Error at init column family classes.", e);
             }
         }
     }
 
-    private void populateColumnFamilies(List<byte[]> dbColumnFamilies, List<ColumnFamilyHandle> columnFamilyHandles) {
-        if (dbColumnFamilies == null) {
-            for (int i = 1; i < columnFamilyClassNames.size(); i++) {
-                classNameToColumnFamilyHandleMapping.put(
-                        columnFamilyClassNames.get(i), columnFamilyHandles.get(i));
-            }
-        } else {
-            for (int i = 1; i < dbColumnFamilies.size(); i++) {
-                classNameToColumnFamilyHandleMapping.put(
-                        new String(dbColumnFamilies.get(i)), columnFamilyHandles.get(i));
-            }
+    private void populateColumnFamilies(List<String> dbColumnFamilyNames, List<ColumnFamilyHandle> columnFamilyHandles) {
+        List<String> columnFamilyNamesToPopulate = Optional.ofNullable(dbColumnFamilyNames).orElse(columnFamilyClassNames);
+        for (int i = 1; i < columnFamilyNamesToPopulate.size(); i++) {
+            classNameToColumnFamilyHandleMapping.put(
+                    columnFamilyNamesToPopulate.get(i), columnFamilyHandles.get(i));
         }
     }
 
-    private void initiateColumnFamilyDescriptors(List<byte[]> dbColumnFamilies, List<ColumnFamilyDescriptor> columnFamilyDescriptors) {
-        if (dbColumnFamilies == null) {
-            columnFamilyDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY));
-            for (int i = 1; i < columnFamilyClassNames.size(); i++) {
-                columnFamilyDescriptors.add(new ColumnFamilyDescriptor(columnFamilyClassNames.get(i).getBytes()));
-            }
-        } else {
-            dbColumnFamilies.forEach(dbColumnFamily -> columnFamilyDescriptors.add(new ColumnFamilyDescriptor(dbColumnFamily)));
-        }
+    private void initiateColumnFamilyDescriptors(List<String> dbColumnFamilies, List<ColumnFamilyDescriptor> columnFamilyDescriptors) {
+        List<String> columnFamilyNamesToInit = Optional.ofNullable(dbColumnFamilies).orElse(columnFamilyClassNames);
+        columnFamilyNamesToInit.forEach(columnFamilyName -> columnFamilyDescriptors.add(new ColumnFamilyDescriptor(columnFamilyName.getBytes())));
     }
 
     @Override
@@ -173,7 +217,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             rocksBackupEngine.createNewBackup(db, false);
             log.info("Finished database backup to {}", backupPath);
         } catch (Exception e) {
-            throw new DataBaseException(String.format("Failed to generate database backup. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Failed to generate database backup.", e);
         }
     }
 
@@ -189,18 +233,17 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             checkIfBackupHasNotListedColumnFamilies();
             openDB();
             log.info("Finished database restore from {}", backupPath);
+        } catch (DataBaseException e) {
+            throw new DataBaseException("Failed to restore database.\n" + e.getMessage(), e);
         } catch (Exception e) {
-            if (e instanceof DataBaseException) {
-                throw new DataBaseException("Failed to restore database. " + e.getMessage());
-            }
-            throw new DataBaseException(String.format("Failed to restore database. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Failed to restore database", e);
         }
     }
 
     private void checkIfBackupHasNotListedColumnFamilies() {
-        List<byte[]> dbColumnFamilies = getColumnFamiliesFromDB();
-        List<String> notListedColumnFamilies = getNotListedColumnFamilies(dbColumnFamilies);
-        if (!notListedColumnFamilies.isEmpty()) {
+        List<String> dbColumnFamilyNames = getColumnFamilyNamesFromDB();
+        List<String> notListedColumnFamilyNames = getNotListedColumnNames(dbColumnFamilyNames);
+        if (!notListedColumnFamilyNames.isEmpty()) {
             throw new DataBaseException("The backup database has column families that are not listed in the code. Please check your version");
         }
     }
@@ -210,16 +253,14 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
         try {
             return db.get(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key);
         } catch (RocksDBException e) {
-            e.printStackTrace();
+            log.error("Error at getting by key from db", e);
             return null;
         }
     }
 
     public RocksIterator getIterator(String columnFamilyName) {
         RocksIterator it = null;
-        try {
-            ReadOptions readOptions = new ReadOptions();
-
+        try (ReadOptions readOptions = new ReadOptions()) {
             ColumnFamilyHandle columnFamilyHandler = classNameToColumnFamilyHandleMapping.get(columnFamilyName);
             it = db.newIterator(columnFamilyHandler, readOptions);
             if (columnFamilyHandler == null) {
@@ -238,14 +279,13 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
         return !iterator.isValid();
     }
 
-
     @Override
     public boolean put(String columnFamilyName, byte[] key, byte[] value) {
         try {
             db.put(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key, value);
             return true;
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Error at putting to db", e);
             return false;
         }
     }
@@ -256,7 +296,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             db.put(classNameToColumnFamilyHandleMapping.get(columnFamilyName), writeOptions, key, value);
             return true;
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Error at putting to db with write options", e);
             return false;
         }
     }
@@ -277,7 +317,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             db.write(new WriteOptions(), writeBatch);
             return true;
         } catch (RocksDBException e) {
-            e.printStackTrace();
+            log.error("Error at putting by batch to db", e);
             return false;
         }
     }
@@ -287,17 +327,18 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
         try {
             db.delete(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key);
         } catch (RocksDBException e) {
-            e.printStackTrace();
+            log.error("Error at deleting from db", e);
         }
     }
 
-    private IEntity get(Class<?> entityClass, Hash key) {
+    @Override
+    public IEntity get(Class<?> entityClass, Hash key) {
         try {
             Hash entityHash = new Hash(db.get(
                     classNameToColumnFamilyHandleMapping.get(entityClass.getName()), key.getBytes()));
             return (IEntity) SerializationUtils.deserialize(entityHash.getBytes());
         } catch (RocksDBException e) {
-            e.printStackTrace();
+            log.error("Error at getting from db", e);
             return null;
         }
     }
@@ -311,11 +352,11 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
                     throw new DataBaseException("Unable to create new DB directory");
                 }
             }
+        } catch (DataBaseException e) {
+            throw e;
         } catch (Exception e) {
-            if (e instanceof DataBaseException) {
-                throw e;
-            }
-            throw new DataBaseException(String.format("Create db directory error. Class: %s, Exception message: %s", e.getClass(), e.getMessage()));
+            throw new DataBaseException("Create db directory error.", e);
+
         }
     }
 
@@ -325,7 +366,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             RocksDB.loadLibrary();
             log.info("RocksDB library loaded");
         } catch (Exception e) {
-            throw e;
+            throw new DataBaseException("Error loading rocksdb library", e);
         }
     }
 

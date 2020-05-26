@@ -3,15 +3,17 @@ package io.coti.basenode.crypto;
 import io.coti.basenode.data.BaseTransactionData;
 import io.coti.basenode.data.Hash;
 import io.coti.basenode.data.TransactionData;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.ByteBuffer;
 import java.util.List;
 
+@Slf4j
 @Component
 public class TransactionCrypto extends SignatureCrypto<TransactionData> {
 
-    private final static int BASE_TRANSACTION_HASH_SIZE = 32;
+    private static final int BASE_TRANSACTION_HASH_SIZE = 32;
 
     @Override
     public byte[] getSignatureMessage(TransactionData transactionData) {
@@ -52,14 +54,14 @@ public class TransactionCrypto extends SignatureCrypto<TransactionData> {
         try {
             for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
                 if (baseTransactionData.getHash() == null) {
-                    BaseTransactionCrypto.valueOf(baseTransactionData.getClass().getSimpleName()).setBaseTransactionHash(baseTransactionData);
+                    BaseTransactionCrypto.getByBaseTransactionClass(baseTransactionData.getClass()).setBaseTransactionHash(baseTransactionData);
                 }
             }
 
             Hash transactionHash = getHashFromBaseTransactionHashesData(transactionData);
             transactionData.setHash(transactionHash);
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+        } catch (Exception e) {
+            log.error("Transaction crypto set transaction hash error", e);
         }
 
     }
@@ -77,7 +79,7 @@ public class TransactionCrypto extends SignatureCrypto<TransactionData> {
         if (!this.isTransactionHashCorrect(transactionData))
             return false;
         for (BaseTransactionData baseTransactionData : transactionData.getBaseTransactions()) {
-            if (!BaseTransactionCrypto.valueOf(baseTransactionData.getClass().getSimpleName()).isBaseTransactionValid(transactionData, baseTransactionData))
+            if (!BaseTransactionCrypto.getByBaseTransactionClass(baseTransactionData.getClass()).isBaseTransactionValid(transactionData, baseTransactionData))
                 return false;
         }
         return true;
