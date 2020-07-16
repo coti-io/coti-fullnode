@@ -6,13 +6,14 @@ import io.coti.basenode.data.interfaces.IEntity;
 import lombok.Data;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Set;
 
 @Data
 public class AddressTransactionsHistory implements IEntity {
 
     private static final long serialVersionUID = 6148574209385536578L;
-    private transient Hash hash;
+    private Hash hash;
     private Instant creationTime;
     private Set<Hash> transactionsHistory;
 
@@ -28,16 +29,6 @@ public class AddressTransactionsHistory implements IEntity {
     }
 
     @Override
-    public Hash getHash() {
-        return hash;
-    }
-
-    @Override
-    public void setHash(Hash hash) {
-        this.hash = hash;
-    }
-
-    @Override
     public boolean equals(Object other) {
         if (other == this) {
             return true;
@@ -47,6 +38,11 @@ public class AddressTransactionsHistory implements IEntity {
             return false;
         }
         return hash.equals(((AddressTransactionsHistory) other).hash);
+    }
+
+    @Override
+    public int hashCode() {
+        return Arrays.hashCode(hash.getBytes());
     }
 }
 

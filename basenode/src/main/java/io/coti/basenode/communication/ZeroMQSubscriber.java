@@ -8,6 +8,7 @@ import io.coti.basenode.communication.interfaces.ISubscriberHandler;
 import io.coti.basenode.data.NodeType;
 import io.coti.basenode.data.PublisherHeartBeatData;
 import io.coti.basenode.data.interfaces.IPropagatable;
+import io.coti.basenode.exceptions.CotiRunTimeException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,28 +30,28 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
     private static final int HEARTBEAT_INTERVAL = 10000;
     private static final int INITIAL_DELAY = 5000;
     private static final int FIXED_DELAY = 5000;
+    private static final String ZMQ_SUBSCRIBER_HANDLER_ERROR = "ZMQ subscriber message handler task error";
     private ZMQ.Context zeroMQContext;
     private ZMQ.Socket propagationReceiver;
-    private Map<String, ConnectedNodeData> connectedNodes = new ConcurrentHashMap<>();
+    private final Map<String, ConnectedNodeData> connectedNodes = new ConcurrentHashMap<>();
     private Thread propagationReceiverThread;
     @Autowired
     private ISerializer serializer;
     private EnumMap<NodeType, List<Class<? extends IPropagatable>>> publisherNodeTypeToMessageTypesMap;
-    private Map<String, Thread> queueNameToThreadMap = new HashMap<>();
+    private final Map<String, Thread> queueNameToThreadMap = new HashMap<>();
     private NodeType subscriberNodeType;
     @Autowired
     private ISubscriberHandler subscriberHandler;
-
 
     @Override
     public void init() {
         initSockets();
         BlockingQueue<ZeroMQMessageData> messageQueue = ZeroMQSubscriberQueue.HEARTBEAT.getQueue();
-        queueNameToThreadMap.put(ZeroMQSubscriberQueue.HEARTBEAT.name(), new Thread(() -> this.handleMessagesQueueTask(messageQueue)));
+        queueNameToThreadMap.put(ZeroMQSubscriberQueue.HEARTBEAT.name(), new Thread(() -> this.handleMessagesQueueTask(messageQueue), ZeroMQSubscriberQueue.HEARTBEAT.name() + " SUB"));
         subscriberHandler.init();
     }
 
-    public void initSockets() {
+    private void initSockets() {
         zeroMQContext = ZMQ.context(1);
         propagationReceiver = zeroMQContext.socket(SocketType.SUB);
         propagationReceiver.setHWM(10000);
@@ -67,7 +68,7 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
         this.publisherNodeTypeToMessageTypesMap = publisherNodeTypeToMessageTypesMap;
         publisherNodeTypeToMessageTypesMap.forEach(((nodeType, classes) -> classes.forEach(messageType -> {
             ZeroMQSubscriberQueue queueEnum = ZeroMQSubscriberQueue.getQueueEnum(messageType);
-            queueNameToThreadMap.putIfAbsent(queueEnum.toString(), new Thread(() -> this.handleMessagesQueueTask(queueEnum.getQueue())));
+            queueNameToThreadMap.putIfAbsent(queueEnum.toString(), new Thread(() -> this.handleMessagesQueueTask(queueEnum.getQueue()), queueEnum.name() + " SUB"));
         })));
     }
 
@@ -77,32 +78,37 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
             boolean contextTerminated = false;
             while (!contextTerminated && !Thread.currentThread().isInterrupted()) {
                 try {
-                    String channel = propagationReceiver.recvStr();
-                    log.debug("Received a new message on channel: {}", channel);
-                    String[] channelArray = channel.split("-");
-                    Class<? extends IPropagatable> propagatedMessageType = (Class<? extends IPropagatable>) Class.forName(channelArray[0]);
-                    byte[] message = propagationReceiver.recv();
-                    ZeroMQSubscriberQueue.getQueue(propagatedMessageType).put(new ZeroMQMessageData(channel, message));
-                } catch (InterruptedException e) {
-                    log.info("ZMQ subscriber propagation receiver interrupted");
-                    Thread.currentThread().interrupt();
+                    addToMessageQueue();
                 } catch (ZMQException e) {
                     if (e.getErrorCode() == ZMQ.Error.ETERM.getCode()) {
                         contextTerminated = true;
                     } else {
-                        log.error("ZeroMQ exception at propagation receiver thread", e);
+                        log.error("ZeroMQ exception at subscriber thread", e);
                     }
                 } catch (Exception e) {
-                    log.error("Error at propagation receiver thread", e);
+                    log.error("Error at subscriber thread", e);
                 }
             }
             propagationReceiver.close();
         });
         propagationReceiverThread.start();
-
-
     }
 
+    private void addToMessageQueue() throws ClassNotFoundException {
+        try {
+            String channel = propagationReceiver.recvStr();
+            log.debug("Received a new message on channel: {}", channel);
+            String[] channelArray = channel.split("-");
+            Class<? extends IPropagatable> propagatedMessageType = (Class<? extends IPropagatable>) Class.forName(channelArray[0]);
+            byte[] message = propagationReceiver.recv();
+            ZeroMQSubscriberQueue.getQueue(propagatedMessageType).put(new ZeroMQMessageData(channel, message));
+        } catch (InterruptedException e) {
+            log.info("ZMQ subscriber propagation receiver interrupted");
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Override
     public void initPropagationHandler() {
         queueNameToThreadMap.values().forEach(Thread::start);
     }
@@ -116,8 +122,11 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
             } catch (InterruptedException e) {
                 log.info("ZMQ subscriber message handler interrupted");
                 Thread.currentThread().interrupt();
+            } catch (CotiRunTimeException e) {
+                log.error(ZMQ_SUBSCRIBER_HANDLER_ERROR);
+                e.logMessage();
             } catch (Exception e) {
-                log.error("ZMQ message handler task error", e);
+                log.error(ZMQ_SUBSCRIBER_HANDLER_ERROR, e);
             }
         }
         LinkedList<ZeroMQMessageData> remainingMessages = new LinkedList<>();
@@ -127,8 +136,11 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
             remainingMessages.forEach(zeroMQMessageData -> {
                 try {
                     propagationProcess(zeroMQMessageData);
+                } catch (CotiRunTimeException e) {
+                    log.error(ZMQ_SUBSCRIBER_HANDLER_ERROR);
+                    e.logMessage();
                 } catch (Exception e) {
-                    log.error("ZMQ message handler task error", e);
+                    log.error(ZMQ_SUBSCRIBER_HANDLER_ERROR, e);
                 }
             });
         }
@@ -236,8 +248,8 @@ public class ZeroMQSubscriber implements IPropagationSubscriber {
     }
 
     @Override
-    public int getMessageQueueSize() {
-        return ZeroMQSubscriberQueue.TRANSACTION.getQueue().size();
+    public int getMessageQueueSize(ZeroMQSubscriberQueue zeroMQSubscriberQueue) {
+        return zeroMQSubscriberQueue.getQueue().size();
     }
 
     @Override

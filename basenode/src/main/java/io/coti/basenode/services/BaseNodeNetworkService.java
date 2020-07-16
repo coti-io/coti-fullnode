@@ -1,8 +1,12 @@
 package io.coti.basenode.services;
 
+import io.coti.basenode.communication.ZeroMQSubscriberQueue;
+import io.coti.basenode.communication.interfaces.IPropagationSubscriber;
+import io.coti.basenode.crypto.NetworkCrypto;
 import io.coti.basenode.crypto.NetworkNodeCrypto;
 import io.coti.basenode.crypto.NodeRegistrationCrypto;
 import io.coti.basenode.data.*;
+import io.coti.basenode.exceptions.NetworkChangeException;
 import io.coti.basenode.exceptions.NetworkException;
 import io.coti.basenode.exceptions.NetworkNodeValidationException;
 import io.coti.basenode.http.CustomHttpComponentsClientHttpRequestFactory;
@@ -24,7 +28,6 @@ import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -41,6 +44,8 @@ public class BaseNodeNetworkService implements INetworkService {
     protected String recoveryServerAddress;
     @Value("${kycserver.public.key}")
     private String kycServerPublicKey;
+    @Value("${node.manager.public.key:}")
+    private String nodeManagerPublicKey;
     @Value("${network}")
     protected NetworkType networkType;
     @Value("${validate.server.url:true}")
@@ -54,7 +59,11 @@ public class BaseNodeNetworkService implements INetworkService {
     @Autowired
     private NodeRegistrationCrypto nodeRegistrationCrypto;
     @Autowired
+    private NetworkCrypto networkCrypto;
+    @Autowired
     private ApplicationContext applicationContext;
+    @Autowired
+    private IPropagationSubscriber propagationSubscriber;
     protected Map<NodeType, Map<Hash, NetworkNodeData>> multipleNodeMaps;
     protected Map<NodeType, NetworkNodeData> singleNodeNetworkDataMap;
     protected NetworkNodeData networkNodeData;
@@ -75,7 +84,6 @@ public class BaseNodeNetworkService implements INetworkService {
             if (multipleNodeMaps != null) {
                 log.info("FullNode: {}, DspNode: {}, TrustScoreNode: {}", multipleNodeMaps.get(NodeType.FullNode).size(), multipleNodeMaps.get(NodeType.DspNode).size(), multipleNodeMaps.get(NodeType.TrustScoreNode).size());
             }
-
         } catch (Exception e) {
             log.error("Error at last state of network", e);
         }
@@ -84,6 +92,12 @@ public class BaseNodeNetworkService implements INetworkService {
     @Override
     public void handleNetworkChanges(NetworkData newNetworkData) {
         log.info("New network structure received");
+
+        verifyNodeManager(newNetworkData);
+
+        if (propagationSubscriber.getMessageQueueSize(ZeroMQSubscriberQueue.NETWORK) != 0) {
+            throw new NetworkChangeException("Skipped handling network data due to pending newer network changes");
+        }
 
         if (!isNodeConnectedToNetwork(newNetworkData)) {
             try {
@@ -95,7 +109,23 @@ public class BaseNodeNetworkService implements INetworkService {
         }
     }
 
+    @Override
+    public void verifyNodeManager(NetworkData newNetworkData) {
+        if (!verifyNodeManagerKey(newNetworkData)) {
+            throw new NetworkNodeValidationException("Invalid node manager hash");
+        }
+
+        if (!networkCrypto.verifySignature(newNetworkData)) {
+            throw new NetworkNodeValidationException("Invalid signature by node manager");
+        }
+    }
+
+    private boolean verifyNodeManagerKey(NetworkData newNetworkData) {
+        return nodeManagerPublicKey.equals(newNetworkData.getSignerHash().toString());
+    }
+
     public boolean isNodeConnectedToNetwork(NetworkData networkData) {
+        log.debug("{} is connected to network", networkData);
         return true;
     }
 
@@ -110,7 +140,7 @@ public class BaseNodeNetworkService implements INetworkService {
     public Map<Hash, NetworkNodeData> getMapFromFactory(NodeType nodeType) {
         Map<Hash, NetworkNodeData> mapToGet = multipleNodeMaps.get(nodeType);
         if (mapToGet == null) {
-            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
+            throw new IllegalArgumentException(String.format(INVALID_NODE_TYPE, nodeType));
         }
         return mapToGet;
     }
@@ -118,14 +148,14 @@ public class BaseNodeNetworkService implements INetworkService {
     @Override
     public NetworkNodeData getSingleNodeData(NodeType nodeType) {
         if (!singleNodeNetworkDataMap.containsKey(nodeType)) {
-            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
+            throw new IllegalArgumentException(String.format(INVALID_NODE_TYPE, nodeType));
         }
         return singleNodeNetworkDataMap.get(nodeType);
     }
 
     private void setSingleNodeData(NodeType nodeType, NetworkNodeData newNetworkNodeData) {
         if (!singleNodeNetworkDataMap.containsKey(nodeType)) {
-            throw new IllegalArgumentException(String.format("Unsupported networkNodeData type : %s", nodeType));
+            throw new IllegalArgumentException(String.format(INVALID_NODE_TYPE, nodeType));
         }
         if (newNetworkNodeData != null && !newNetworkNodeData.getNodeType().equals(nodeType)) {
             log.error("Invalid networkNodeData type : {}", nodeType);
@@ -141,7 +171,7 @@ public class BaseNodeNetworkService implements INetworkService {
             log.error("Invalid networkNodeData adding request");
             throw new IllegalArgumentException("Invalid networkNodeData adding request");
         }
-        if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
+        if (!NodeTypeService.getByNodeType(networkNodeData.getNodeType()).isMultipleNode()) {
             setSingleNodeData(networkNodeData.getNodeType(), networkNodeData);
         } else {
             getMapFromFactory(networkNodeData.getNodeType()).put(networkNodeData.getHash(), networkNodeData);
@@ -151,7 +181,7 @@ public class BaseNodeNetworkService implements INetworkService {
 
     @Override
     public void removeNode(NetworkNodeData networkNodeData) {
-        if (!NodeTypeService.valueOf(networkNodeData.getNodeType().toString()).isMultipleNode()) {
+        if (!NodeTypeService.getByNodeType(networkNodeData.getNodeType()).isMultipleNode()) {
             setSingleNodeData(networkNodeData.getNodeType(), null);
         } else {
             if (getMapFromFactory(networkNodeData.getNodeType()).remove(networkNodeData.getHash()) == null) {
@@ -213,7 +243,7 @@ public class BaseNodeNetworkService implements INetworkService {
         }
         InetAddress inetAddress;
         try {
-            inetAddress = Inet4Address.getByName(host);
+            inetAddress = InetAddress.getByName(host);
         } catch (Exception e) {
             throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_UNKNOWN_HOST, webServerUrl), e);
         }
@@ -265,10 +295,10 @@ public class BaseNodeNetworkService implements INetworkService {
     @Override
     public List<NetworkNodeData> getNetworkNodeDataList() {
         List<NetworkNodeData> networkNodeDataList = new ArrayList<>();
-        multipleNodeMaps.forEach((nodeType, hashNetworkNodeDataMap) -> hashNetworkNodeDataMap.forEach(((hash, networkNodeData) -> networkNodeDataList.add(networkNodeData))));
-        singleNodeNetworkDataMap.forEach(((nodeType, networkNodeData) -> {
-            if (networkNodeData != null && networkNodeData.getNodeHash() != null) {
-                networkNodeDataList.add(networkNodeData);
+        multipleNodeMaps.forEach((nodeType, nodeHashToNodeInNetworkMap) -> nodeHashToNodeInNetworkMap.forEach(((nodeHash, nodeInNetwork) -> networkNodeDataList.add(nodeInNetwork))));
+        singleNodeNetworkDataMap.forEach(((nodeType, nodeInNetwork) -> {
+            if (nodeInNetwork != null && nodeInNetwork.getNodeHash() != null) {
+                networkNodeDataList.add(nodeInNetwork);
             }
         }));
         return networkNodeDataList;
@@ -276,9 +306,7 @@ public class BaseNodeNetworkService implements INetworkService {
 
     @Override
     public void addListToSubscription(Collection<NetworkNodeData> nodeDataList) {
-        Iterator<NetworkNodeData> nodeDataIterator = nodeDataList.iterator();
-        while (nodeDataIterator.hasNext()) {
-            NetworkNodeData node = nodeDataIterator.next();
+        for (NetworkNodeData node : nodeDataList) {
             log.info("{} {} is about to be added to subscription and network", node.getNodeType(), node.getHttpFullAddress());
             communicationService.addSubscription(node.getPropagationFullAddress(), node.getNodeType());
         }
@@ -289,12 +317,7 @@ public class BaseNodeNetworkService implements INetworkService {
         connectedDspNodes.removeIf(dspNode -> {
             boolean remove = !(newDspNodeMap.containsKey(dspNode.getNodeHash()) && newDspNodeMap.get(dspNode.getNodeHash()).getAddress().equals(dspNode.getAddress()));
             if (remove) {
-                log.info("Disconnecting from dsp {} from subscribing and receiving", dspNode.getAddress());
-                communicationService.removeSubscription(dspNode.getPropagationFullAddress(), NodeType.DspNode);
-                communicationService.removeSender(dspNode.getReceivingFullAddress(), NodeType.DspNode);
-                if (recoveryServerAddress != null && recoveryServerAddress.equals(dspNode.getHttpFullAddress())) {
-                    recoveryServerAddress = null;
-                }
+                handleConnectedDspNodeRemove(dspNode, nodeType);
             } else {
                 NetworkNodeData newDspNode = newDspNodeMap.get(dspNode.getNodeHash());
                 if (!newDspNode.getPropagationPort().equals(dspNode.getPropagationPort())) {
@@ -313,6 +336,16 @@ public class BaseNodeNetworkService implements INetworkService {
             return remove;
         });
 
+    }
+
+    private void handleConnectedDspNodeRemove(NetworkNodeData dspNode, NodeType nodeType) {
+        communicationService.removeSubscription(dspNode.getPropagationFullAddress(), NodeType.DspNode);
+        if (nodeType.equals(NodeType.FullNode)) {
+            communicationService.removeSender(dspNode.getReceivingFullAddress(), NodeType.DspNode);
+        }
+        if (recoveryServerAddress != null && recoveryServerAddress.equals(dspNode.getHttpFullAddress())) {
+            recoveryServerAddress = null;
+        }
     }
 
     @Override
@@ -367,6 +400,13 @@ public class BaseNodeNetworkService implements INetworkService {
         NetworkData networkData = new NetworkData();
         networkData.setMultipleNodeMaps(multipleNodeMaps);
         networkData.setSingleNodeNetworkDataMap(singleNodeNetworkDataMap);
+        return networkData;
+    }
+
+    @Override
+    public NetworkData getSignedNetworkData() {
+        NetworkData networkData = getNetworkData();
+        networkCrypto.signMessage(networkData);
         return networkData;
     }
 

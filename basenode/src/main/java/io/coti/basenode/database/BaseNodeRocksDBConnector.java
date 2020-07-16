@@ -23,6 +23,9 @@ import java.util.stream.Collectors;
 @Service
 public class BaseNodeRocksDBConnector implements IDatabaseConnector {
 
+    private static final boolean CREATE_IF_MISSING = true;
+    private static final boolean CREATE_MISSING_COLUMN_FAMILIES = true;
+    private static final int MAX_TOTAL_WAL_SIZE_IN_BYTES = 536870912;
     @Value("${database.folder.name}")
     private String databaseFolderName;
     @Value("${application.name}")
@@ -38,7 +41,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
     protected List<String> columnFamilyClassNames;
     protected List<String> resetColumnFamilyNames = new ArrayList<>();
     private List<String> resetTransactionColumnFamilyNames;
-    private Map<String, ColumnFamilyHandle> classNameToColumnFamilyHandleMapping = new LinkedHashMap<>();
+    private final Map<String, ColumnFamilyHandle> classNameToColumnFamilyHandleMapping = new LinkedHashMap<>();
 
     public void init() {
         setColumnFamily();
@@ -176,8 +179,9 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             List<ColumnFamilyDescriptor> columnFamilyDescriptors = new ArrayList<>();
             List<ColumnFamilyHandle> columnFamilyHandles = new ArrayList<>();
             initiateColumnFamilyDescriptors(dbColumnFamilies, columnFamilyDescriptors);
-            dbOptions.setCreateIfMissing(true);
-            dbOptions.setCreateMissingColumnFamilies(true);
+            dbOptions.setCreateIfMissing(CREATE_IF_MISSING);
+            dbOptions.setCreateMissingColumnFamilies(CREATE_MISSING_COLUMN_FAMILIES);
+            dbOptions.setMaxTotalWalSize(MAX_TOTAL_WAL_SIZE_IN_BYTES);
             db = RocksDB.open(dbOptions, dbPath, columnFamilyDescriptors, columnFamilyHandles);
             populateColumnFamilies(dbColumnFamilies, columnFamilyHandles);
         } catch (Exception e) {
@@ -189,7 +193,7 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
     private void initColumnFamilyClasses() {
         for (int i = 1; i < columnFamilyClassNames.size(); i++) {
             try {
-                ((Collection) ctx.getBean(Class.forName(columnFamilyClassNames.get(i)))).init();
+                ((Collection<?>) ctx.getBean(Class.forName(columnFamilyClassNames.get(i)))).init();
             } catch (Exception e) {
                 throw new DataBaseException("Error at init column family classes.", e);
             }
@@ -254,22 +258,22 @@ public class BaseNodeRocksDBConnector implements IDatabaseConnector {
             return db.get(classNameToColumnFamilyHandleMapping.get(columnFamilyName), key);
         } catch (RocksDBException e) {
             log.error("Error at getting by key from db", e);
-            return null;
+            return new byte[0];
         }
     }
 
     public RocksIterator getIterator(String columnFamilyName) {
-        RocksIterator it = null;
         try (ReadOptions readOptions = new ReadOptions()) {
             ColumnFamilyHandle columnFamilyHandler = classNameToColumnFamilyHandleMapping.get(columnFamilyName);
-            it = db.newIterator(columnFamilyHandler, readOptions);
             if (columnFamilyHandler == null) {
                 log.error("Column family {} iterator wasn't found ", columnFamilyName);
+                return null;
             }
+            return db.newIterator(columnFamilyHandler, readOptions);
         } catch (Exception ex) {
             log.error("Exception while getting iterator of {}", columnFamilyName, ex);
+            return null;
         }
-        return it;
     }
 
     @Override

@@ -48,7 +48,7 @@ public class TransactionHelper implements ITransactionHelper {
     @Autowired
     private ExpandedTransactionTrustScoreCrypto expandedTransactionTrustScoreCrypto;
     private Map<Hash, Stack<TransactionState>> transactionHashToTransactionStateStackMapping;
-    private AtomicLong totalTransactions = new AtomicLong(0);
+    private final AtomicLong totalTransactions = new AtomicLong(0);
     private Set<Hash> noneIndexedTransactionHashes;
 
     @PostConstruct
@@ -236,12 +236,12 @@ public class TransactionHelper implements ITransactionHelper {
 
     public void startHandleTransaction(TransactionData transactionData) {
 
-        transactionHashToTransactionStateStackMapping.put(transactionData.getHash(), new Stack());
+        transactionHashToTransactionStateStackMapping.put(transactionData.getHash(), new Stack<>());
         transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).push(RECEIVED);
     }
 
     public void endHandleTransaction(TransactionData transactionData) {
-        if (!transactionHashToTransactionStateStackMapping.containsKey(transactionData.getHash())) {
+        if (!isTransactionHashProcessing(transactionData.getHash())) {
             return;
         }
         if (isTransactionFinished(transactionData)) {
@@ -254,7 +254,7 @@ public class TransactionHelper implements ITransactionHelper {
 
     @Override
     public boolean isTransactionFinished(TransactionData transactionData) {
-        return transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).peek().equals(FINISHED);
+        return isTransactionHashProcessing(transactionData.getHash()) && transactionHashToTransactionStateStackMapping.get(transactionData.getHash()).peek().equals(FINISHED);
     }
 
     private void rollbackTransaction(TransactionData transactionData) {
@@ -271,10 +271,9 @@ public class TransactionHelper implements ITransactionHelper {
                 case RECEIVED:
                     transactionHashToTransactionStateStackMapping.remove(transactionData.getHash());
                     break;
-                default: {
+                default:
                     log.error("Transaction {} has a state {} which is illegal in rollback scenario", transactionData, transactionState);
                     throw new IllegalArgumentException("Invalid transaction state");
-                }
             }
         }
     }

@@ -100,7 +100,7 @@ public class ZeroMQPropagationPublisher implements IPropagationPublisher {
                 }
             }
             publishRemainingMessages();
-        });
+        }, "PUB");
         publishMessageThread.start();
     }
 
@@ -131,7 +131,7 @@ public class ZeroMQPropagationPublisher implements IPropagationPublisher {
                     publishMessageThread.join();
                 }
             } catch (InterruptedException e) {
-                log.error("ZeroMQPropagationPublisher interupted", e);
+                log.error("ZeroMQPropagationPublisher interrupted", e);
                 Thread.currentThread().interrupt();
             }
 
