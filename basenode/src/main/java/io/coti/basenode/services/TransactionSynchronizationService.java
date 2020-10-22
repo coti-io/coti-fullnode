@@ -50,7 +50,7 @@ public class TransactionSynchronizationService implements ITransactionSynchroniz
             AtomicLong receivedMissingTransactionNumber = new AtomicLong(0);
             final AtomicBoolean finishedToReceive = new AtomicBoolean(false);
             final AtomicBoolean finishedToInsert = new AtomicBoolean(false);
-            Thread monitorMissingTransactionThread = transactionService.monitorTransactionThread("missing", completedMissingTransactionNumber, receivedMissingTransactionNumber);
+            Thread monitorMissingTransactionThread = transactionService.monitorTransactionThread("missing", completedMissingTransactionNumber, receivedMissingTransactionNumber, "Sync Txs Monitor");
             Thread insertMissingTransactionThread = insertMissingTransactionThread(missingTransactions, trustChainUnconfirmedExistingTransactionHashes, completedMissingTransactionNumber, monitorMissingTransactionThread, finishedToReceive, finishedToInsert);
             ResponseExtractor<Void> responseExtractor = getResponseExtractorForMissingTransactionChunks(missingTransactions, receivedMissingTransactionNumber, insertMissingTransactionThread);
             restTemplate.execute(networkService.getRecoveryServerAddress() + RECOVERY_NODE_GET_BATCH_ENDPOINT
@@ -80,7 +80,7 @@ public class TransactionSynchronizationService implements ITransactionSynchroniz
             int n;
             while ((n = response.getBody().read(buf, offset, buf.length - offset)) > 0) {
                 try {
-                    TransactionData missingTransaction = jacksonSerializer.deserialize(buf);
+                    TransactionData missingTransaction = (TransactionData) jacksonSerializer.deserialize(buf);
                     if (missingTransaction != null) {
                         missingTransactions.add(missingTransaction);
                         receivedMissingTransactionNumber.incrementAndGet();

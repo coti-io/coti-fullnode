@@ -9,9 +9,10 @@ import java.util.List;
 import java.util.function.Consumer;
 
 public interface ICommunicationService {
+
     void initSubscriber(NodeType nodeType, EnumMap<NodeType, List<Class<? extends IPropagatable>>> publisherNodeTypeToMessageTypesMap);
 
-    void initReceiver(String receivingPort, HashMap<String, Consumer<Object>> classNameToReceiverHandlerMapping);
+    void initReceiver(String receivingPort, HashMap<String, Consumer<IPropagatable>> classNameToReceiverHandlerMapping);
 
     void addSender(String receivingServerAddress);
 

@@ -12,6 +12,7 @@ import io.coti.basenode.exceptions.NetworkNodeValidationException;
 import io.coti.basenode.http.CustomHttpComponentsClientHttpRequestFactory;
 import io.coti.basenode.services.interfaces.ICommunicationService;
 import io.coti.basenode.services.interfaces.INetworkService;
+import io.coti.basenode.services.interfaces.ISslService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.InetAddressValidator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,10 +28,18 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLPeerUnverifiedException;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -64,6 +73,8 @@ public class BaseNodeNetworkService implements INetworkService {
     private ApplicationContext applicationContext;
     @Autowired
     private IPropagationSubscriber propagationSubscriber;
+    @Autowired
+    private ISslService sslService;
     protected Map<NodeType, Map<Hash, NetworkNodeData>> multipleNodeMaps;
     protected Map<NodeType, NetworkNodeData> singleNodeNetworkDataMap;
     protected NetworkNodeData networkNodeData;
@@ -76,6 +87,8 @@ public class BaseNodeNetworkService implements INetworkService {
         singleNodeNetworkDataMap = new EnumMap<>(NodeType.class);
         NodeTypeService.getNodeTypeList(false).forEach(nodeType -> singleNodeNetworkDataMap.put(nodeType, null));
 
+        sslService.init();
+        log.info("{} is up", this.getClass().getSimpleName());
     }
 
     @Scheduled(initialDelay = 1000, fixedDelay = 10000)
@@ -198,20 +211,29 @@ public class BaseNodeNetworkService implements INetworkService {
             log.error("Invalid network type {} by node {}", networkNodeData.getNetworkType(), networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(String.format(INVALID_NETWORK_TYPE, networkType, networkNodeData.getNetworkType()));
         }
+
         if (!networkNodeCrypto.verifySignature(networkNodeData)) {
             log.error("Invalid signature by node {}", networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(INVALID_SIGNATURE);
         }
+
         if (!nodeRegistrationCrypto.verifySignature(networkNodeData.getNodeRegistrationData())) {
             log.error("Invalid node registration signature by node {}", networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(INVALID_NODE_REGISTRATION_SIGNATURE);
         }
+
         if (!networkNodeData.getNodeRegistrationData().getRegistrarHash().toString().equals(kycServerPublicKey)) {
             log.error("Invalid registrar node hash for node {}", networkNodeData.getNodeHash());
             throw new NetworkNodeValidationException(INVALID_NODE_REGISTRAR);
         }
+
+        if (!validateAddress(networkNodeData)) {
+            log.error("Invalid IP, expected IPV4, received ip: {}", networkNodeData.getAddress());
+            throw new NetworkNodeValidationException(INVALID_NODE_IP_VERSION);
+        }
+
         if (networkNodeData.getNodeType().equals(NodeType.FullNode) && validateServerUrl) {
-            validateAddressAndServerUrl(networkNodeData);
+            validateWebServerUrl(networkNodeData);
         }
 
         if (networkNodeData.getNodeType().equals(NodeType.FullNode) && !validateFeeData(networkNodeData.getFeeData())) {
@@ -220,47 +242,89 @@ public class BaseNodeNetworkService implements INetworkService {
         }
     }
 
-    private void validateAddressAndServerUrl(NetworkNodeData networkNodeData) {
+    private boolean validateAddress(NetworkNodeData networkNodeData) {
         InetAddressValidator validator = InetAddressValidator.getInstance();
         String ip = networkNodeData.getAddress();
-        if (!validator.isValidInet4Address(ip)) {
-            log.error("Invalid IP, expected IPV4, received ip {}", ip);
-            throw new NetworkNodeValidationException(INVALID_NODE_IP_VERSION);
-        }
+        return validator.isValidInet4Address(ip);
+    }
+
+    private void validateWebServerUrl(NetworkNodeData networkNodeData) {
+        String ip = networkNodeData.getAddress();
+
         String webServerUrl = networkNodeData.getWebServerUrl();
-        String protocol;
-        try {
-            protocol = getProtocol(webServerUrl);
-        } catch (Exception e) {
-            throw new NetworkNodeValidationException(INVALID_NODE_SERVER_URL, e);
-        }
+        URL url = getUrl(webServerUrl);
+
+        validateWebServerUrl(url, ip);
+        validateSSL(url, networkNodeData.getNodeHash());
+    }
+
+    private void validateWebServerUrl(URL nodeUrl, String ip) {
+
+        String protocol = nodeUrl.getProtocol();
         if (!protocol.equals("https")) {
-            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_REQUIRED, webServerUrl));
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_REQUIRED, nodeUrl));
         }
-        String host = getHost(webServerUrl);
+
+        String host = nodeUrl.getHost();
         if (host.isEmpty()) {
-            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_EMPTY_HOST, webServerUrl));
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_EMPTY_HOST, nodeUrl));
         }
         InetAddress inetAddress;
         try {
             inetAddress = InetAddress.getByName(host);
         } catch (Exception e) {
-            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_UNKNOWN_HOST, webServerUrl), e);
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_UNKNOWN_HOST, nodeUrl), e);
         }
         String expectedIp = inetAddress.getHostAddress();
         if (!expectedIp.equals(ip)) {
-            throw new NetworkNodeValidationException(String.format(INVALID_NODE_IP_FOR_SERVER_URL, webServerUrl, host, ip, expectedIp));
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_IP_FOR_SERVER_URL, nodeUrl, host, ip, expectedIp));
+        }
+    }
+
+    private void validateSSL(URL nodeUrl, Hash nodeHash) {
+        HttpsURLConnection conn;
+        try {
+            conn = (HttpsURLConnection) nodeUrl.openConnection();
+            conn.connect();
+        } catch (IOException e) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_CONNECTION_NOT_OPENED, nodeUrl));
+        }
+        try {
+            Certificate[] certs = conn.getServerCertificates();
+            if (certs == null || certs.length == 0) {
+                throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_CERTIFICATE_NOT_FOUND, nodeUrl));
+            }
+            LocalDate now = LocalDate.now(ZoneId.of("UTC"));
+            long daysBeforeExpiration = 0;
+            for (Certificate c : certs) {
+                if (!(c instanceof X509Certificate)) {
+                    throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_INVALID_SERVER_CERTIFICATE, nodeUrl));
+                }
+            }
+
+            X509Certificate[] serverCertificates = (X509Certificate[]) certs;
+            X509Certificate principalCertificate = serverCertificates[0];
+            Date expiresOn = principalCertificate.getNotAfter();
+            LocalDate expireDate = expiresOn.toInstant().atZone(ZoneId.of("UTC")).toLocalDate();
+            if (!expireDate.isAfter(now)) {
+                throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_FAILED_TO_VERIFY_CERTIFICATE_EXPIRATION, nodeUrl));
+            }
+
+            sslService.checkServerTrusted((X509Certificate[]) certs);
+
+            daysBeforeExpiration = now.until(expireDate, ChronoUnit.DAYS);
+            log.info("Trusted SSL certificate will expire on : {},  {} days to go for node url {} and node hash {}", expireDate, daysBeforeExpiration, nodeUrl, nodeHash);
+
+        } catch (SSLPeerUnverifiedException e) {
+            throw new NetworkNodeValidationException(String.format(INVALID_NODE_SERVER_URL_SSL_FAILED_TO_VERIFY_CERTIFICATE, nodeUrl));
+        } finally {
+            conn.disconnect();
         }
     }
 
     @Override
     public String getHost(String webServerUrl) {
         return getUrl(webServerUrl).getHost();
-    }
-
-    @Override
-    public String getProtocol(String webServerUrl) {
-        return getUrl(webServerUrl).getProtocol();
     }
 
     private URL getUrl(String webServerUrl) {
@@ -351,32 +415,40 @@ public class BaseNodeNetworkService implements INetworkService {
     @Override
     public void handleConnectedSingleNodeChange(NetworkData newNetworkData, NodeType singleNodeType, NodeType connectingNodeType) {
         NetworkNodeData newSingleNodeData = newNetworkData.getSingleNodeNetworkDataMap().get(singleNodeType);
-        NetworkNodeData singleNodeData = getSingleNodeData(singleNodeType);
+        NetworkNodeData currentSingleNodeData = getSingleNodeData(singleNodeType);
         if (newSingleNodeData != null) {
             if (newSingleNodeData.getPropagationPort() != null) {
-                if (singleNodeData != null && singleNodeData.getPropagationPort() != null &&
-                        !(newSingleNodeData.getPropagationPort().equals(singleNodeData.getPropagationPort()) && newSingleNodeData.getAddress().equals(singleNodeData.getAddress()))) {
-                    communicationService.removeSubscription(singleNodeData.getPropagationFullAddress(), singleNodeType);
-                    communicationService.addSubscription(newSingleNodeData.getPropagationFullAddress(), singleNodeType);
-                }
-                if (singleNodeData == null) {
-                    communicationService.addSubscription(newSingleNodeData.getPropagationFullAddress(), singleNodeType);
-                }
+                handleSingleNodeWithDifferentPropagationPort(singleNodeType, newSingleNodeData, currentSingleNodeData);
             }
-            if (singleNodeType.equals(NodeType.ZeroSpendServer) && connectingNodeType.equals(NodeType.DspNode) && newSingleNodeData.getReceivingPort() != null) {
-                if (singleNodeData != null && singleNodeData.getReceivingPort() != null &&
-                        !(newSingleNodeData.getReceivingPort().equals(singleNodeData.getReceivingPort()) && newSingleNodeData.getAddress().equals(singleNodeData.getAddress()))) {
-                    communicationService.removeSender(newSingleNodeData.getReceivingFullAddress(), singleNodeType);
-                    communicationService.addSender(newSingleNodeData.getReceivingFullAddress());
-                }
-                if (singleNodeData == null) {
-                    communicationService.addSender(newSingleNodeData.getReceivingFullAddress());
-                }
-            }
-            if (recoveryServerAddress != null && (singleNodeData == null || recoveryServerAddress.equals(singleNodeData.getHttpFullAddress()))) {
+            handleConnectedZeroSpendServer(singleNodeType, connectingNodeType, newSingleNodeData, currentSingleNodeData);
+            if (recoveryServerAddress != null && (currentSingleNodeData == null || recoveryServerAddress.equals(currentSingleNodeData.getHttpFullAddress()))) {
                 recoveryServerAddress = newSingleNodeData.getHttpFullAddress();
             }
             setSingleNodeData(singleNodeType, newSingleNodeData);
+        }
+    }
+
+    private void handleSingleNodeWithDifferentPropagationPort(NodeType singleNodeType, NetworkNodeData newSingleNodeData, NetworkNodeData currentSingleNodeData) {
+        if (currentSingleNodeData != null && currentSingleNodeData.getPropagationPort() != null &&
+                !(newSingleNodeData.getPropagationPort().equals(currentSingleNodeData.getPropagationPort()) && newSingleNodeData.getAddress().equals(currentSingleNodeData.getAddress()))) {
+            communicationService.removeSubscription(currentSingleNodeData.getPropagationFullAddress(), singleNodeType);
+            communicationService.addSubscription(newSingleNodeData.getPropagationFullAddress(), singleNodeType);
+        }
+        if (currentSingleNodeData == null) {
+            communicationService.addSubscription(newSingleNodeData.getPropagationFullAddress(), singleNodeType);
+        }
+    }
+
+    private void handleConnectedZeroSpendServer(NodeType singleNodeType, NodeType connectingNodeType, NetworkNodeData newSingleNodeData, NetworkNodeData currentSingleNodeData) {
+        if (singleNodeType.equals(NodeType.ZeroSpendServer) && connectingNodeType.equals(NodeType.DspNode) && newSingleNodeData.getReceivingPort() != null) {
+            if (currentSingleNodeData != null && currentSingleNodeData.getReceivingPort() != null &&
+                    !(newSingleNodeData.getReceivingPort().equals(currentSingleNodeData.getReceivingPort()) && newSingleNodeData.getAddress().equals(currentSingleNodeData.getAddress()))) {
+                communicationService.removeSender(newSingleNodeData.getReceivingFullAddress(), singleNodeType);
+                communicationService.addSender(newSingleNodeData.getReceivingFullAddress());
+            }
+            if (currentSingleNodeData == null) {
+                communicationService.addSender(newSingleNodeData.getReceivingFullAddress());
+            }
         }
     }
 
