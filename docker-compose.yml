@@ -1,0 +1,15 @@
+version: "3"
+services:
+  fullnode:
+    image: "coti/fullnode:${VERSION}"
+    build:
+      context: .
+      args:
+        MODULE: "fullnode"
+    ports:
+      - "7070:7070"
+    volumes:
+      - "./data:/app/data"
+    restart: on-failure
+    command: ["java", "-jar", "fullnode/target/fullnode-${VERSION}.jar", "--spring.config.additional-location=./data/fullnode1.properties"]
+
