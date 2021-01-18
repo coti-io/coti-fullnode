@@ -4,6 +4,7 @@ import io.coti.basenode.communication.data.ZeroMQMessageData;
 import io.coti.basenode.communication.interfaces.IReceiver;
 import io.coti.basenode.communication.interfaces.ISerializer;
 import io.coti.basenode.data.interfaces.IPropagatable;
+import io.coti.basenode.exceptions.ZeroMQReceiverException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -15,6 +16,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -23,25 +25,43 @@ public class ZeroMQReceiver implements IReceiver {
 
     private HashMap<String, Consumer<IPropagatable>> classNameToHandlerMapping;
     private ZMQ.Context zeroMQContext;
+    private SocketType socketType;
     private ZMQ.Socket receiver;
+    private ZMQ.Socket monitorSocket;
     private BlockingQueue<ZeroMQMessageData> messageQueue;
     private Thread receiverThread;
+    private Thread monitorThread;
     private Thread messagesQueueHandlerThread;
     @Autowired
     private ISerializer serializer;
+    private final AtomicBoolean monitorInitialized = new AtomicBoolean(false);
 
     @Override
     public void init(String receivingPort, HashMap<String, Consumer<IPropagatable>> classNameToHandlerMapping) {
         this.classNameToHandlerMapping = classNameToHandlerMapping;
         zeroMQContext = ZMQ.context(1);
-        receiver = zeroMQContext.socket(SocketType.ROUTER);
-        receiver.bind("tcp://*:" + receivingPort);
+        socketType = SocketType.ROUTER;
+        receiver = zeroMQContext.socket(socketType);
+        monitorSocket = ZeroMQUtils.createAndConnectMonitorSocket(zeroMQContext, receiver);
+        if (!receiver.bind("tcp://*:" + receivingPort)) {
+            throw new ZeroMQReceiverException("ZeroMQ receiver socket bind failed to receiver port " + receivingPort);
+        }
         log.info("Zero MQ Client Connected!");
         messageQueue = new LinkedBlockingQueue<>();
     }
 
     @Override
+    public void initMonitor() {
+        monitorInitialized.set(true);
+    }
+
+    @Override
     public void startListening() {
+        startReceiverThread();
+        startMonitorThread();
+    }
+
+    private void startReceiverThread() {
         receiverThread = new Thread(() -> {
             boolean contextTerminated = false;
             while (!contextTerminated && !Thread.currentThread().isInterrupted()) {
@@ -50,6 +70,7 @@ public class ZeroMQReceiver implements IReceiver {
                     addToMessageQueue(classType);
                 } catch (ZMQException e) {
                     if (e.getErrorCode() == ZMQ.Error.ETERM.getCode()) {
+                        log.info("ZeroMQ receiver context terminated");
                         contextTerminated = true;
                     } else {
                         log.error("ZeroMQ exception at receiver thread", e);
@@ -59,8 +80,30 @@ public class ZeroMQReceiver implements IReceiver {
                 }
             }
             receiver.close();
-        });
+        }, "ROUTER");
         receiverThread.start();
+    }
+
+    private void startMonitorThread() {
+        monitorThread = new Thread(() -> {
+            AtomicBoolean contextTerminated = new AtomicBoolean(false);
+            while (!contextTerminated.get() && !Thread.currentThread().isInterrupted()) {
+                try {
+                    ZeroMQUtils.getServerSocketEvent(monitorSocket, socketType, monitorInitialized, contextTerminated);
+                } catch (ZMQException e) {
+                    if (e.getErrorCode() == ZMQ.Error.ETERM.getCode()) {
+                        log.info("ZeroMQ receiver context terminated");
+                        contextTerminated.set(true);
+                    } else {
+                        log.error("ZeroMQ exception at monitor receiver thread", e);
+                    }
+                } catch (Exception e) {
+                    log.error("Exception at monitor receiver thread", e);
+                }
+            }
+            monitorSocket.close();
+        }, "MONITOR ROUTER");
+        monitorThread.start();
     }
 
     private void addToMessageQueue(String classType) {
@@ -77,7 +120,7 @@ public class ZeroMQReceiver implements IReceiver {
 
     @Override
     public void initReceiverHandler() {
-        messagesQueueHandlerThread = new Thread(this::handleMessagesQueueTask, "ROUTER");
+        messagesQueueHandlerThread = new Thread(this::handleMessagesQueueTask, "ROUTER HANDLER");
         messagesQueueHandlerThread.start();
     }
 
@@ -123,6 +166,8 @@ public class ZeroMQReceiver implements IReceiver {
                 receiverThread.join();
                 messagesQueueHandlerThread.interrupt();
                 messagesQueueHandlerThread.join();
+                monitorThread.interrupt();
+                monitorThread.join();
             }
         } catch (InterruptedException e) {
             log.error("Interrupted shutdown ZeroMQ receiver");
