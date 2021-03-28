@@ -41,7 +41,12 @@ public class TransactionController {
 
     @PostMapping()
     public ResponseEntity<IResponse> getTransactionDetails(@Valid @RequestBody GetTransactionRequest getTransactionRequest) {
-        return transactionService.getTransactionDetails(getTransactionRequest.getTransactionHash());
+        return transactionService.getTransactionDetails(getTransactionRequest.getTransactionHash(), false);
+    }
+
+    @PostMapping(value = "/extended")
+    public ResponseEntity<IResponse> getExtendedTransactionDetails(@Valid @RequestBody GetTransactionRequest getTransactionRequest) {
+        return transactionService.getTransactionDetails(getTransactionRequest.getTransactionHash(), true);
     }
 
     @PostMapping(value = "/multiple")
@@ -59,9 +64,29 @@ public class TransactionController {
         transactionService.getAddressTransactionBatch(getAddressTransactionBatchRequest, response, false);
     }
 
+    @PostMapping(value = "/addressTransactions/timestamp/batch")
+    public void getAddressTransactionBatchByTimestamp(@Valid @RequestBody GetAddressTransactionBatchByTimestampRequest getAddressTransactionBatchByTimestampRequest, HttpServletResponse response) {
+        transactionService.getAddressTransactionBatchByTimestamp(getAddressTransactionBatchByTimestampRequest, response, false);
+    }
+
+    @PostMapping(value = "/addressTransactions/date/batch")
+    public void getAddressTransactionBatchByDate(@Valid @RequestBody GetAddressTransactionBatchByDateRequest getAddressTransactionBatchByDateRequest, HttpServletResponse response) {
+        transactionService.getAddressTransactionBatchByDate(getAddressTransactionBatchByDateRequest, response, false);
+    }
+
     @PostMapping(value = "/addressTransactions/reduced/batch")
     public void getAddressReducedTransactionBatch(@Valid @RequestBody GetAddressTransactionBatchRequest getAddressTransactionBatchRequest, HttpServletResponse response) {
         transactionService.getAddressTransactionBatch(getAddressTransactionBatchRequest, response, true);
+    }
+
+    @PostMapping(value = "/addressTransactions/timestamp/reduced/batch")
+    public void getAddressReducedTransactionBatchByTimestamp(@Valid @RequestBody GetAddressTransactionBatchByTimestampRequest getAddressTransactionBatchByTimestampRequest, HttpServletResponse response) {
+        transactionService.getAddressTransactionBatchByTimestamp(getAddressTransactionBatchByTimestampRequest, response, true);
+    }
+
+    @PostMapping(value = "/addressTransactions/date/reduced/batch")
+    public void getAddressReducedTransactionBatchByDate(@Valid @RequestBody GetAddressTransactionBatchByDateRequest getAddressTransactionBatchByDateRequest, HttpServletResponse response) {
+        transactionService.getAddressTransactionBatchByDate(getAddressTransactionBatchByDateRequest, response, true);
     }
 
     @GetMapping(value = "/lastTransactions")

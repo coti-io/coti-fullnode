@@ -10,6 +10,7 @@ import io.coti.basenode.exceptions.TransactionValidationException;
 import io.coti.basenode.http.CustomGson;
 import io.coti.basenode.http.GetTransactionsResponse;
 import io.coti.basenode.http.Response;
+import io.coti.basenode.http.data.ExtendedTransactionResponseData;
 import io.coti.basenode.http.data.ReducedTransactionResponseData;
 import io.coti.basenode.http.data.TransactionResponseData;
 import io.coti.basenode.http.data.TransactionStatus;
@@ -20,7 +21,10 @@ import io.coti.basenode.model.Transactions;
 import io.coti.basenode.services.BaseNodeTransactionService;
 import io.coti.basenode.services.interfaces.*;
 import io.coti.fullnode.crypto.ResendTransactionRequestCrypto;
+import io.coti.fullnode.data.AddressTransactionsByAttachment;
 import io.coti.fullnode.http.*;
+import io.coti.fullnode.http.data.TimeOrder;
+import io.coti.fullnode.model.AddressTransactionsByAttachments;
 import io.coti.fullnode.websocket.WebSocketSender;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,9 +35,9 @@ import org.springframework.stereotype.Service;
 import javax.servlet.http.HttpServletResponse;
 import java.io.PrintWriter;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -59,6 +63,8 @@ public class TransactionService extends BaseNodeTransactionService {
     private IClusterService clusterService;
     @Autowired
     private AddressTransactionsHistories addressTransactionHistories;
+    @Autowired
+    private AddressTransactionsByAttachments addressTransactionsByAttachments;
     @Autowired
     private Transactions transactions;
     @Autowired
@@ -357,6 +363,80 @@ public class TransactionService extends BaseNodeTransactionService {
         }
     }
 
+    public void getAddressTransactionBatchByTimestamp(GetAddressTransactionBatchByTimestampRequest getAddressTransactionBatchByTimestampRequest, HttpServletResponse response, boolean reduced) {
+        try {
+            PrintWriter output = response.getWriter();
+            chunkService.startOfChunk(output);
+
+            Instant startTime = getAddressTransactionBatchByTimestampRequest.getStartTime();
+            Instant endTime = getAddressTransactionBatchByTimestampRequest.getEndTime();
+            Instant now = Instant.now();
+
+            if (startTime == null || (!startTime.isAfter(now) && (endTime == null || !startTime.isAfter(endTime)))) {
+                Set<Hash> addressHashSet = getAddressTransactionBatchByTimestampRequest.getAddresses();
+                TimeOrder order = getAddressTransactionBatchByTimestampRequest.getOrder();
+
+                AtomicBoolean firstTransactionSent = new AtomicBoolean(false);
+                addressHashSet.forEach(addressHash ->
+                        sendAddressTransactionsByAttachment(addressHash, startTime, endTime, order, reduced, firstTransactionSent, output)
+                );
+            }
+            chunkService.endOfChunk(output);
+        } catch (Exception e) {
+            log.error("Error sending address transaction batch by timestamp");
+            log.error(e.getMessage());
+        }
+    }
+
+    private void sendAddressTransactionsByAttachment(Hash addressHash, Instant startTime, Instant endTime, TimeOrder order, boolean reduced, AtomicBoolean firstTransactionSent, PrintWriter output) {
+        AddressTransactionsByAttachment addressTransactionsByAttachment = addressTransactionsByAttachments.getByHash(addressHash);
+        if (addressTransactionsByAttachment != null) {
+            NavigableMap<Instant, Set<Hash>> transactionsHistoryByAttachment = addressTransactionsByAttachment.getTransactionsHistoryByAttachment();
+            Instant from = startTime;
+            Instant to = endTime;
+            if (from == null) {
+                from = transactionsHistoryByAttachment.firstKey();
+            }
+            if (to == null) {
+                to = transactionsHistoryByAttachment.lastKey();
+            }
+            if (!from.isAfter(to)) {
+                NavigableMap<Instant, Set<Hash>> transactionsHistoryByAttachmentSubMap = transactionsHistoryByAttachment.subMap(from, true, to, true);
+                if (order != null && order.equals(TimeOrder.DESC)) {
+                    transactionsHistoryByAttachmentSubMap = transactionsHistoryByAttachmentSubMap.descendingMap();
+                }
+                transactionsHistoryByAttachmentSubMap.forEach((attachmentTime, transactionHashSet) ->
+                        transactionHashSet.forEach(transactionHash ->
+                                sendTransactionResponse(transactionHash, firstTransactionSent, output, addressHash, reduced)
+                        )
+                );
+            }
+        }
+    }
+
+    public void getAddressTransactionBatchByDate(GetAddressTransactionBatchByDateRequest getAddressTransactionBatchByDateRequest, HttpServletResponse response, boolean reduced) {
+        try {
+            Set<Hash> addressHashSet = getAddressTransactionBatchByDateRequest.getAddresses();
+            LocalDate startDate = getAddressTransactionBatchByDateRequest.getStartDate();
+            LocalDate endDate = getAddressTransactionBatchByDateRequest.getEndDate();
+            TimeOrder order = getAddressTransactionBatchByDateRequest.getOrder();
+
+            Instant startTime = null;
+            Instant endTime = null;
+            if (startDate != null) {
+                startTime = startDate.atStartOfDay().toInstant(ZoneOffset.UTC);
+            }
+            if (endDate != null) {
+                endTime = endDate.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+            }
+
+            getAddressTransactionBatchByTimestamp(new GetAddressTransactionBatchByTimestampRequest(addressHashSet, startTime, endTime, order), response, reduced);
+        } catch (Exception e) {
+            log.error("Error sending date range address transaction batch by date");
+            log.error(e.getMessage());
+        }
+    }
+
     private void sendTransactionResponse(Hash transactionHash, AtomicBoolean firstTransactionSent, PrintWriter output) {
         sendTransactionResponse(transactionHash, firstTransactionSent, output, null, false);
     }
@@ -423,25 +503,18 @@ public class TransactionService extends BaseNodeTransactionService {
 
     }
 
-    public ResponseEntity<IResponse> getTransactionDetails(Hash transactionHash) {
-        TransactionData transactionData = transactions.getByHash(transactionHash);
-        if (transactionData == null)
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body(new Response(
-                            TRANSACTION_DOESNT_EXIST_MESSAGE,
-                            STATUS_ERROR));
+    public ResponseEntity<IResponse> getTransactionDetails(Hash transactionHash, boolean extended) {
         try {
-            TransactionResponseData transactionResponseData = new TransactionResponseData(transactionData);
+            TransactionData transactionData = transactions.getByHash(transactionHash);
+            if (transactionData == null)
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new Response(TRANSACTION_DOESNT_EXIST_MESSAGE, STATUS_ERROR));
+            TransactionResponseData transactionResponseData = extended ? new ExtendedTransactionResponseData(transactionData) : new TransactionResponseData(transactionData);
+            GetTransactionResponse getTransactionResponse = extended ? new GetExtendedTransactionResponse((ExtendedTransactionResponseData) transactionResponseData) : new GetTransactionResponse(transactionResponseData);
             return ResponseEntity.status(HttpStatus.OK)
-                    .body(new GetTransactionResponse(transactionResponseData));
+                    .body(getTransactionResponse);
         } catch (Exception e) {
             log.error(e.getMessage());
-            return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new Response(
-                            TRANSACTION_DETAILS_SERVER_ERROR,
-                            STATUS_ERROR));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new Response(TRANSACTION_DETAILS_SERVER_ERROR, STATUS_ERROR));
         }
     }
 
